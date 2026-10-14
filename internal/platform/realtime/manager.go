@@ -11,9 +11,8 @@ import (
 	"github.com/centrifugal/gocent/v3"
 	"github.com/samber/oops"
 
-	"bgin/internal/config"
-	"bgin/internal/platform/errs"
-	"bgin/internal/platform/resilience"
+	"bfiber/internal/config"
+	"bfiber/internal/platform/errs"
 )
 
 // Config 为 config.CentrifugoConfig 的类型别名，消除重复定义并直接复用统一配置结构。
@@ -115,11 +114,12 @@ func (m *ManagerImpl) Ping(ctx context.Context) error {
 	return nil
 }
 
-var realtimeExecutor = resilience.NewNetworkExecutor(3, 50*time.Millisecond, 2*time.Second)
-
-// retryCall 以统一重试策略（3 次、50ms 起指数退避）执行 Centrifugo 出站调用。
+// retryCall 在调用方 Context 约束下执行 Centrifugo 出站调用。
 func retryCall(ctx context.Context, fn func() error) error {
-	return resilience.Run(ctx, realtimeExecutor, fn)
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	return fn()
 }
 
 // DispatchContext 向单个频道推送事件消息（受调用方 Context 生命周期控制）。

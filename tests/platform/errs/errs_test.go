@@ -10,14 +10,12 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
-	"reflect"
 	"regexp"
 	"runtime"
 	"slices"
 	"testing"
 
-	"github.com/gin-gonic/gin"
-	"github.com/go-playground/validator/v10"
+	"github.com/gofiber/fiber/v3"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/samber/oops"
@@ -25,7 +23,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.uber.org/zap"
 
-	"bgin/internal/platform/errs"
+	"bfiber/internal/platform/errs"
 )
 
 // api.md 5.2 明文规定的两条文案，不得随意改动。
@@ -33,16 +31,6 @@ const (
 	msgValidationFailed = "Validation failed"
 	msgInternal         = "An unexpected error occurred"
 )
-
-// payload 覆盖嵌套结构与切片字段，用于验证字段路径的规范化。
-type payload struct {
-	Email string `json:"email" validate:"required,email"`
-	Tags  []tag  `json:"tags" validate:"dive"`
-}
-
-type tag struct {
-	Name string `json:"name" validate:"required"`
-}
 
 // TestMapBusinessError 校验业务错误按登记的状态码与错误码输出。
 func TestMapBusinessError(t *testing.T) {
@@ -80,18 +68,14 @@ func TestMapBusinessError(t *testing.T) {
 	}
 }
 
-// TestMapValidationErrorNormalisesFieldPaths 校验未包装的 validator 错误也能给出
-// 干净的字段路径：无根类型名、索引写成点号（api.md 5.2 的 users.0.email 形态）。
-func TestMapValidationErrorNormalisesFieldPaths(t *testing.T) {
-	instance := validator.New()
-	instance.RegisterTagNameFunc(func(field reflect.StructField) string {
-		if name := field.Tag.Get("json"); name != "" {
-			return name
-		}
-		return field.Name
+// TestMapValidationError 校验带有字段明细的业务校验错误映射为 422。
+func TestMapValidationError(t *testing.T) {
+	err := errs.Validation(map[string][]string{
+		"email":       {"The email is required."},
+		"tags.0.name": {"The tags.0.name is required."},
 	})
 
-	status, resp := errs.Map(instance.Struct(payload{Tags: []tag{{}}}))
+	status, resp := errs.Map(err)
 
 	require.Equal(t, http.StatusUnprocessableEntity, status)
 	assert.Equal(t, string(errs.CodeValidationFailed), resp.Code)
@@ -211,13 +195,6 @@ func TestWithFieldAccumulates(t *testing.T) {
 		WithField("name", "second")
 
 	assert.Equal(t, []string{"first", "second"}, err.Fields()["name"])
-}
-
-// TestNormalizePath 校验索引路径改写为点号分隔。
-func TestNormalizePath(t *testing.T) {
-	assert.Equal(t, "users.0.email", errs.NormalizePath("users[0].email"))
-	assert.Equal(t, "a.0.1.b", errs.NormalizePath("a[0][1].b"))
-	assert.Equal(t, "plain", errs.NormalizePath("plain"))
 }
 
 // TestStatusCoversEveryDeclaredCode 校验每个公开错误码都有明确的状态码，
@@ -432,22 +409,24 @@ func TestSanitizeMessage(t *testing.T) {
 
 // TestRender_Sanitization 验证 Render 执行时敏感信息被安全清洗。
 func TestRender_Sanitization(t *testing.T) {
-	gin.SetMode(gin.TestMode)
-	rec := httptest.NewRecorder()
-	c, _ := gin.CreateTestContext(rec)
-	c.Request = httptest.NewRequest(http.MethodGet, "/test", nil)
+	app := fiber.New()
+	app.Get("/test", func(c fiber.Ctx) error {
+		// 触发带敏感信息的消息
+		err := errs.BadRequest("failed: select id from users where token=xyz")
+		return errs.Render(c, err)
+	})
 
-	// 触发带敏感信息的消息
-	err := errs.BadRequest("failed: select id from users where token=xyz")
-	errs.Render(c, err)
+	req := httptest.NewRequest(http.MethodGet, "/test", nil)
+	resp, err := app.Test(req, fiber.TestConfig{Timeout: 0})
+	require.NoError(t, err)
 
-	assert.Equal(t, http.StatusBadRequest, rec.Code)
-	var resp errs.Response
-	unmarshalErr := json.Unmarshal(rec.Body.Bytes(), &resp)
+	assert.Equal(t, http.StatusBadRequest, resp.StatusCode)
+	var respBody errs.Response
+	unmarshalErr := json.NewDecoder(resp.Body).Decode(&respBody)
 	require.NoError(t, unmarshalErr)
-	assert.Equal(t, "An unexpected error occurred", resp.Message)
+	assert.Equal(t, "An unexpected error occurred", respBody.Message)
 
-	assert.Equal(t, string(errs.CodeBadRequest), resp.Code)
+	assert.Equal(t, string(errs.CodeBadRequest), respBody.Code)
 }
 
 // TestOopsFields 验证 oops 绑定的上下文能被自动解包为 Zap 字段，且敏感键值被安全脱敏。

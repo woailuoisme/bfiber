@@ -1,0 +1,42 @@
+# Gitleaks 密钥检测与安全审计配置 (bfiber)
+# 参考文档: https://github.com/gitleaks/gitleaks
+
+title = "bfiber Gitleaks Configuration"
+
+[extend]
+# 继承 Gitleaks 官方默认检测规则集
+useDefault = true
+
+[allowlist]
+description = "豁免规则：环境模板、本地开发配置、测试套件与自动生成文档"
+
+# 路径白名单正则（忽略匹配到的文件路径）
+paths = [
+    '''^\.env\.production$''',
+    '''^\.env(\..+)?$''',
+    '''^docker/''',
+    '''^tests/''',
+    '''^storage/''',
+    '''^tmp/''',
+    '''^bin/''',
+    '''^migrations/''',
+    '''^internal/shared/apidocs/''',
+]
+
+# 允许的特定示例/测试密钥与密文字符串正则
+regexes = [
+    '''0123456789abcdef0123456789abcdef''',
+    '''centrifugo-test-secret-key-12345''',
+    '''admin12345''',
+    '''redis_secret''',
+    '''test-secret''',
+]
+
+# 忽略包含指定测试/示例特征的凭证
+stopwords = [
+    "example",
+    "sample",
+    "test",
+    "dummy",
+    "mock",
+]

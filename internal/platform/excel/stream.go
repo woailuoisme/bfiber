@@ -13,7 +13,7 @@ import (
 	"github.com/samber/oops"
 	"github.com/xuri/excelize/v2"
 
-	"bgin/internal/platform/errs"
+	"bfiber/internal/platform/errs"
 )
 
 // StreamImportOption 定义流式导入配置选项别名，与 ImportOption 保持统一。

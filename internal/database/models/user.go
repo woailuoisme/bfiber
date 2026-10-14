@@ -9,9 +9,9 @@ import (
 
 	"github.com/uptrace/bun"
 
-	"bgin/internal/database"
-	"bgin/internal/platform/errs"
-	"bgin/internal/shared/enums"
+	"bfiber/internal/database"
+	"bfiber/internal/platform/errs"
+	"bfiber/internal/shared/enums"
 )
 
 // 用户角色枚举别名，取值统一定义于 internal/shared/enums。

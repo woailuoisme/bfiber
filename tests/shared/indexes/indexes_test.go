@@ -7,8 +7,8 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"bgin/internal/platform/search"
-	"bgin/internal/shared/indexes"
+	"bfiber/internal/platform/search"
+	"bfiber/internal/shared/indexes"
 )
 
 func TestIndexesRegisterAll(t *testing.T) {

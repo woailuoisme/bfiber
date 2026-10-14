@@ -11,9 +11,9 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/uptrace/bun"
 
-	"bgin/internal/console/core"
-	"bgin/internal/platform/search"
-	_ "bgin/internal/shared/indexes"
+	"bfiber/internal/console/core"
+	"bfiber/internal/platform/search"
+	_ "bfiber/internal/shared/indexes"
 )
 
 // ScoutImportOptions 封装 scout:import 命令的参数与依赖容器 (SRP & DIP)。

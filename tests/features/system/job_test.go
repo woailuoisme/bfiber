@@ -6,8 +6,8 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"bgin/internal/features/system"
-	"bgin/internal/platform/queue"
+	"bfiber/internal/features/system"
+	"bfiber/internal/platform/queue"
 )
 
 func TestCleanupTempFilesJobContract(t *testing.T) {

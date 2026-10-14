@@ -19,8 +19,8 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"bgin/internal/config"
-	"bgin/internal/platform/cache"
+	"bfiber/internal/config"
+	"bfiber/internal/platform/cache"
 )
 
 // newCacheClient 用当前环境的 REDIS_URL 建立连接，并登记关闭。

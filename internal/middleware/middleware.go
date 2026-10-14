@@ -5,17 +5,16 @@
 //   - Auth: JWT 认证守卫（支持 "client"、"admin" 等多守卫策略与多 Guard 顺序回退）
 //   - Can: 基于 Casbin RBAC 的细粒度资源与操作权限校验
 //
-// 全局传输层中间件请参见子包 bgin/internal/middleware/global。
+// 全局传输层中间件请参见子包 bfiber/internal/middleware/global。
 package middleware
 
 import (
-	"github.com/gin-gonic/gin"
 	"go.uber.org/zap"
 
-	"bgin/internal/config"
-	"bgin/internal/platform/authentication"
-	"bgin/internal/platform/authorization"
-	"bgin/internal/platform/cache"
+	"bfiber/internal/config"
+	"bfiber/internal/platform/authentication"
+	"bfiber/internal/platform/authorization"
+	"bfiber/internal/platform/cache"
 )
 
 // Deps 是路由/组中间件所需的依赖，由 bootstrap 装配后注入。
@@ -57,10 +56,4 @@ func New(deps Deps) *Middleware {
 // SetLimiterStore 替换限流器底层存储实现（主要用于单元测试与自定义存储注入）。
 func (m *Middleware) SetLimiterStore(store RateLimiterStore) {
 	m.limiterStore = store
-}
-
-// abortWithError 向上下文附加错误并立即中止后续处理。
-func abortWithError(c *gin.Context, err error) {
-	_ = c.Error(err)
-	c.Abort()
 }

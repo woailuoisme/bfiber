@@ -12,7 +12,7 @@ import (
 	temporalLog "go.temporal.io/sdk/log"
 	"go.uber.org/zap"
 
-	"bgin/internal/config"
+	"bfiber/internal/config"
 )
 
 // NewClient 构造并连接至 Temporal 集群客户端。

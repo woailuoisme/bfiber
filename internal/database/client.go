@@ -12,7 +12,7 @@ import (
 	"github.com/uptrace/bun"
 	"github.com/uptrace/bun/dialect/pgdialect"
 
-	"bgin/internal/config"
+	"bfiber/internal/config"
 )
 
 // Open 建立 PostgreSQL 连接池并执行连通性探测。

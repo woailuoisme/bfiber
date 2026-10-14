@@ -12,7 +12,7 @@ import (
 	"github.com/samber/lo"
 	"github.com/samber/oops"
 
-	"bgin/internal/platform/authentication"
+	"bfiber/internal/platform/authentication"
 )
 
 // Authenticatable 表示实时频道鉴权可操作的用户实体契约。

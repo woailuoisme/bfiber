@@ -5,53 +5,47 @@ import (
 	"errors"
 	"strings"
 
-	"github.com/gin-gonic/gin"
+	"github.com/gofiber/fiber/v3"
 	"go.uber.org/zap"
 
-	"bgin/internal/platform/errs"
+	"bfiber/internal/platform/errs"
 )
 
 // Timeout 【全局中间件】向请求上下文注入超时截止期，超时由下层 I/O 响应并经 ErrorHandler 统一渲染为 504 错误。
 //
 // 自动对 WebSocket 升级握手及 SSE (text/event-stream) 流式长连接进行超时豁免。
-func (m *Middleware) Timeout() gin.HandlerFunc {
-	return func(c *gin.Context) {
+func (m *Middleware) Timeout() fiber.Handler {
+	return func(c fiber.Ctx) error {
 		if m.requestTimeout <= 0 || isStreamingRequest(c) {
-			c.Next()
-			return
+			return c.Next()
 		}
 
-		ctx, cancel := context.WithTimeout(c.Request.Context(), m.requestTimeout)
+		ctx, cancel := context.WithTimeout(c.Context(), m.requestTimeout)
 		defer cancel()
 
-		c.Request = c.Request.WithContext(ctx)
-		c.Next()
+		c.SetContext(ctx)
+		err := c.Next()
 
-		if !errors.Is(ctx.Err(), context.DeadlineExceeded) {
-			return
-		}
-		if !c.Writer.Written() {
-			if len(c.Errors) == 0 || !errors.Is(c.Errors.Last().Err, context.DeadlineExceeded) {
-				_ = c.Error(errs.GatewayTimeout(context.DeadlineExceeded))
+		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+			if m.logger != nil && c.Response().StatusCode() != 0 {
+				m.logger.Warn("request timed out after partial response",
+					zap.String("path", c.Path()),
+					zap.String("method", c.Method()),
+				)
 			}
-			c.Abort()
-			return
+			return errs.GatewayTimeout(context.DeadlineExceeded)
 		}
-		if m.logger != nil {
-			m.logger.Warn("request timed out after partial response",
-				zap.String("path", c.Request.URL.Path),
-				zap.String("method", c.Request.Method),
-			)
-		}
+
+		return err
 	}
 }
 
 // isStreamingRequest 检测是否为 WebSocket 握手或 SSE (Server-Sent Events) 流式长连接请求。
-func isStreamingRequest(c *gin.Context) bool {
-	if strings.EqualFold(c.GetHeader("Upgrade"), "websocket") {
+func isStreamingRequest(c fiber.Ctx) bool {
+	if strings.EqualFold(c.Get("Upgrade"), "websocket") {
 		return true
 	}
-	if strings.Contains(c.GetHeader("Accept"), "text/event-stream") {
+	if strings.Contains(c.Get("Accept"), "text/event-stream") {
 		return true
 	}
 	return false

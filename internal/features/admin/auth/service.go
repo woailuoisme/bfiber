@@ -7,13 +7,13 @@ import (
 
 	"github.com/uptrace/bun"
 
-	"bgin/internal/database/models"
-	"bgin/internal/platform/authentication"
-	"bgin/internal/platform/errs"
-	"bgin/internal/platform/hasher"
-	"bgin/internal/platform/validator"
-	"bgin/internal/shared/enums"
-	shareduser "bgin/internal/shared/user"
+	"bfiber/internal/database/models"
+	"bfiber/internal/platform/authentication"
+	"bfiber/internal/platform/errs"
+	"bfiber/internal/platform/hasher"
+	"bfiber/internal/platform/validator"
+	"bfiber/internal/shared/enums"
+	shareduser "bfiber/internal/shared/user"
 )
 
 // Deps 声明管理员认证服务的外部依赖。

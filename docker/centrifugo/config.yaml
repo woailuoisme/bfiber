@@ -69,8 +69,8 @@ http_api:
 proxy:
   subscribe:
     enabled: true
-    # 后端 Gin 订阅鉴权端点地址 (容器网络内为 http://app:3300/v1/realtime/proxy/subscribe)
-    endpoint: "http://app:3300/v1/realtime/proxy/subscribe"
+    # 后端订阅鉴权端点地址 (容器网络内为 http://app:3331/v1/realtime/proxy/subscribe)
+    endpoint: "http://app:3331/v1/realtime/proxy/subscribe"
     timeout: "2s"
 
 # ============================================

@@ -5,10 +5,10 @@ import (
 
 	"go.uber.org/zap"
 
-	"bgin/internal/platform/eventbus"
-	"bgin/internal/platform/logger"
-	"bgin/internal/platform/queue"
-	"bgin/internal/shared/events"
+	"bfiber/internal/platform/eventbus"
+	"bfiber/internal/platform/logger"
+	"bfiber/internal/platform/queue"
+	"bfiber/internal/shared/events"
 )
 
 // RegisterListeners 向事件总线挂载 auth 领域切片所关注的所有领域事件监听。

@@ -1,12 +1,12 @@
 package adminauth
 
 import (
-	"github.com/gin-gonic/gin"
+	"github.com/gofiber/fiber/v3"
 
-	"bgin/internal/platform/authentication"
-	"bgin/internal/platform/errs"
-	"bgin/internal/platform/response"
-	"bgin/internal/platform/validator"
+	"bfiber/internal/platform/authentication"
+	"bfiber/internal/platform/errs"
+	"bfiber/internal/platform/response"
+	"bfiber/internal/platform/validator"
 )
 
 // Handler 是管理员认证的 HTTP 适配层。
@@ -30,19 +30,17 @@ func NewHandler(service *Service) *Handler {
 // @Success      200 {object} SessionResource "登录成功并颁发管理端双令牌"
 // @x-order      1
 // @Router       /admin/auth/sign-in/email [post]
-func (h *Handler) SignInEmail(c *gin.Context) {
+func (h *Handler) SignInEmail(c fiber.Ctx) error {
 	var body SignInEmailBody
-	if err := c.ShouldBindJSON(&body); err != nil {
-		_ = c.Error(err)
-		return
+	if err := c.Bind().Body(&body); err != nil {
+		return err
 	}
 
-	session, err := h.service.SignInEmail(c.Request.Context(), body)
+	session, err := h.service.SignInEmail(c.Context(), body)
 	if err != nil {
-		_ = c.Error(err)
-		return
+		return err
 	}
-	response.OK(c, session)
+	return response.OK(c, session)
 }
 
 // GetSession 处理 GET /v1/admin/auth/get-session。
@@ -56,19 +54,17 @@ func (h *Handler) SignInEmail(c *gin.Context) {
 // @Success      200 {object} GetSessionResource "当前管理员会话档案"
 // @x-order      2
 // @Router       /admin/auth/get-session [get]
-func (h *Handler) GetSession(c *gin.Context) {
-	id, ok := authentication.FromContext(c.Request.Context())
+func (h *Handler) GetSession(c fiber.Ctx) error {
+	id, ok := authentication.FromContext(c.Context())
 	if !ok {
-		_ = c.Error(errs.Unauthorized(errs.CodeAuthTokenInvalid, "Authentication is required"))
-		return
+		return errs.Unauthorized(errs.CodeAuthTokenInvalid, "Authentication is required")
 	}
 
-	res, err := h.service.GetSession(c.Request.Context(), id.UserID)
+	res, err := h.service.GetSession(c.Context(), id.UserID)
 	if err != nil {
-		_ = c.Error(err)
-		return
+		return err
 	}
-	response.OK(c, res)
+	return response.OK(c, res)
 }
 
 // Refresh 处理 POST /v1/admin/auth/token/refresh。
@@ -82,19 +78,17 @@ func (h *Handler) GetSession(c *gin.Context) {
 // @Success      200 {object} SessionResource "刷新成功并颁发新双令牌"
 // @x-order      3
 // @Router       /admin/auth/token/refresh [post]
-func (h *Handler) Refresh(c *gin.Context) {
+func (h *Handler) Refresh(c fiber.Ctx) error {
 	var body RefreshTokenBody
-	if err := c.ShouldBindJSON(&body); err != nil {
-		_ = c.Error(err)
-		return
+	if err := c.Bind().Body(&body); err != nil {
+		return err
 	}
 
-	session, err := h.service.Refresh(c.Request.Context(), body)
+	session, err := h.service.Refresh(c.Context(), body)
 	if err != nil {
-		_ = c.Error(err)
-		return
+		return err
 	}
-	response.OK(c, session)
+	return response.OK(c, session)
 }
 
 // SignOut 处理 POST /v1/admin/auth/sign-out。
@@ -109,23 +103,20 @@ func (h *Handler) Refresh(c *gin.Context) {
 // @Success      204 "已登出，无响应体"
 // @x-order      4
 // @Router       /admin/auth/sign-out [post]
-func (h *Handler) SignOut(c *gin.Context) {
-	if !h.service.guard.Check(c.Request.Context()) {
-		_ = c.Error(errs.Unauthorized(errs.CodeAuthTokenInvalid, "Authentication is required"))
-		return
+func (h *Handler) SignOut(c fiber.Ctx) error {
+	if !h.service.guard.Check(c.Context()) {
+		return errs.Unauthorized(errs.CodeAuthTokenInvalid, "Authentication is required")
 	}
 
 	var body SignOutBody
 	if err := validator.BindOptionalJSON(c, &body); err != nil {
-		_ = c.Error(err)
-		return
+		return err
 	}
 
-	if err := h.service.SignOut(c.Request.Context(), body); err != nil {
-		_ = c.Error(err)
-		return
+	if err := h.service.SignOut(c.Context(), body); err != nil {
+		return err
 	}
-	response.NoContent(c)
+	return response.NoContent(c)
 }
 
 // ChangePassword 处理 POST /v1/admin/auth/change-password。
@@ -140,22 +131,19 @@ func (h *Handler) SignOut(c *gin.Context) {
 // @Success      204 "修改成功，无响应体"
 // @x-order      5
 // @Router       /admin/auth/change-password [post]
-func (h *Handler) ChangePassword(c *gin.Context) {
-	id, ok := authentication.FromContext(c.Request.Context())
+func (h *Handler) ChangePassword(c fiber.Ctx) error {
+	id, ok := authentication.FromContext(c.Context())
 	if !ok {
-		_ = c.Error(errs.Unauthorized(errs.CodeAuthTokenInvalid, "Authentication is required"))
-		return
+		return errs.Unauthorized(errs.CodeAuthTokenInvalid, "Authentication is required")
 	}
 
 	var body ChangePasswordBody
-	if err := c.ShouldBindJSON(&body); err != nil {
-		_ = c.Error(err)
-		return
+	if err := c.Bind().Body(&body); err != nil {
+		return err
 	}
 
-	if err := h.service.ChangePassword(c.Request.Context(), id.UserID, body); err != nil {
-		_ = c.Error(err)
-		return
+	if err := h.service.ChangePassword(c.Context(), id.UserID, body); err != nil {
+		return err
 	}
-	response.NoContent(c)
+	return response.NoContent(c)
 }

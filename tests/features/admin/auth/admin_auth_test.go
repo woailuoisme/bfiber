@@ -11,15 +11,15 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"bgin/internal/config"
-	"bgin/internal/database/models"
-	adminauth "bgin/internal/features/admin/auth"
-	"bgin/internal/platform/authentication"
-	"bgin/internal/platform/errs"
-	"bgin/internal/platform/hasher"
-	"bgin/internal/platform/validator"
-	"bgin/internal/shared/enums"
-	shareduser "bgin/internal/shared/user"
+	"bfiber/internal/config"
+	"bfiber/internal/database/models"
+	adminauth "bfiber/internal/features/admin/auth"
+	"bfiber/internal/platform/authentication"
+	"bfiber/internal/platform/errs"
+	"bfiber/internal/platform/hasher"
+	"bfiber/internal/platform/validator"
+	"bfiber/internal/shared/enums"
+	shareduser "bfiber/internal/shared/user"
 )
 
 func init() {
@@ -101,7 +101,7 @@ func setupService(repo *mockRepo) (*adminauth.Service, *authentication.TokenIssu
 	h := hasher.New()
 	tokens := authentication.NewTokenIssuer(config.JWTConfig{
 		Secret:     testJWTSecret,
-		Issuer:     "bgin-test",
+		Issuer:     "bfiber-test",
 		AccessTTL:  15 * time.Minute,
 		RefreshTTL: 24 * time.Hour,
 	}, nil)
@@ -416,10 +416,10 @@ func TestAdminChangePasswordFlow(t *testing.T) {
 
 // TestAdminAuthDTOSerialization 校验 DTO 的 JSON 序列化与反序列化字段契约。
 func TestAdminAuthDTOSerialization(t *testing.T) {
-	raw := []byte(`{"email":"admin@bgin.local","password":"secret"}`)
+	raw := []byte(`{"email":"admin@bfiber.local","password":"secret"}`)
 	var req adminauth.SignInEmailRequest
 	require.NoError(t, json.Unmarshal(raw, &req))
-	assert.Equal(t, "admin@bgin.local", req.Email)
+	assert.Equal(t, "admin@bfiber.local", req.Email)
 	assert.Equal(t, "secret", req.Password)
 
 	signOutRaw := []byte(`{"refreshToken":"rt_test123"}`)

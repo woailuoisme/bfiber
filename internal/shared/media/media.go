@@ -4,8 +4,8 @@ package media
 import (
 	"github.com/uptrace/bun"
 
-	"bgin/internal/config"
-	"bgin/internal/platform/storage"
+	"bfiber/internal/config"
+	"bfiber/internal/platform/storage"
 )
 
 // New 根据配置与基础设施装配顶层多态媒体管理门面 Manager。

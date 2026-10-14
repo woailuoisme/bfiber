@@ -10,8 +10,8 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.temporal.io/sdk/testsuite"
 
-	"bgin/internal/features/system"
-	"bgin/internal/platform/temporal"
+	"bfiber/internal/features/system"
+	"bfiber/internal/platform/temporal"
 )
 
 func TestSystemMaintenanceWorkflow(t *testing.T) {

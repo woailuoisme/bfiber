@@ -2,7 +2,7 @@
     "swagger": "2.0",
     "info": {
         "description": "取值为 \"Bearer \u003caccess_token\u003e\"，含 Bearer 前缀与一个空格（要求具有管理员角色）。",
-        "title": "bgin Admin API",
+        "title": "bfiber Admin API",
         "contact": {},
         "version": "1.0"
     },

@@ -9,7 +9,7 @@ import (
 	"go.opentelemetry.io/otel/codes"
 	"go.opentelemetry.io/otel/trace"
 
-	"bgin/internal/platform/telemetry"
+	"bfiber/internal/platform/telemetry"
 )
 
 // OTelQueryHook 为 Bun ORM 实现基于 OpenTelemetry 标准的分布式追踪查询钩子。
@@ -21,7 +21,7 @@ type OTelQueryHook struct {
 // NewOTelQueryHook 创建 OTelQueryHook 实例。
 func NewOTelQueryHook() *OTelQueryHook {
 	return &OTelQueryHook{
-		tracer: telemetry.Tracer("bgin/database"),
+		tracer: telemetry.Tracer("bfiber/database"),
 	}
 }
 

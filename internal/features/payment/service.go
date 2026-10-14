@@ -10,14 +10,14 @@ import (
 	"github.com/samber/oops"
 	"go.uber.org/zap"
 
-	"bgin/internal/config"
-	"bgin/internal/platform/cache"
-	"bgin/internal/platform/errs"
-	"bgin/internal/platform/eventbus"
-	"bgin/internal/platform/logger"
-	platformPayment "bgin/internal/platform/payment"
-	"bgin/internal/platform/payment/enums"
-	"bgin/internal/shared/events"
+	"bfiber/internal/config"
+	"bfiber/internal/platform/cache"
+	"bfiber/internal/platform/errs"
+	"bfiber/internal/platform/eventbus"
+	"bfiber/internal/platform/logger"
+	platformPayment "bfiber/internal/platform/payment"
+	"bfiber/internal/platform/payment/enums"
+	"bfiber/internal/shared/events"
 )
 
 const (

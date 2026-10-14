@@ -12,7 +12,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"bgin/internal/platform/ready"
+	"bfiber/internal/platform/ready"
 )
 
 type stubPinger struct {

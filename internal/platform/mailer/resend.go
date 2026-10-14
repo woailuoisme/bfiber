@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/http"
 	"net/url"
 	"strings"
 	"time"
@@ -13,9 +14,8 @@ import (
 	"github.com/samber/oops"
 	"go.uber.org/zap"
 
-	"bgin/internal/config"
-	"bgin/internal/platform/errs"
-	"bgin/internal/platform/resilience"
+	"bfiber/internal/config"
+	"bfiber/internal/platform/errs"
 )
 
 // resendMailer 基于 Resend 官方 SDK 实现的现代化邮件发送器。
@@ -35,12 +35,12 @@ func newResendMailer(cfg config.MailConfig, log *zap.Logger) (*resendMailer, err
 		return nil, oops.Code(string(errs.CodeInternal)).Wrap(errors.New("resend: api key cannot be empty"))
 	}
 
-	httpClient := resilience.NewResilientHTTPClient(resilience.ResilientTransportConfig{
+	httpClient := &http.Client{
 		Timeout: 15 * time.Second,
-	})
+	}
 
 	client := resend.NewCustomClient(httpClient, apiKey)
-	client.UserAgent = "bgin-mailer/1.0"
+	client.UserAgent = "bfiber-mailer/1.0"
 
 	baseURLStr := strings.TrimRight(cmp.Or(strings.TrimSpace(cfg.Resend.BaseURL), "https://api.resend.com"), "/") + "/"
 	parsedURL, err := url.Parse(baseURLStr)

@@ -6,7 +6,7 @@ import (
 
 	"github.com/uptrace/bun"
 
-	"bgin/internal/database"
+	"bfiber/internal/database"
 )
 
 type mockTrackableItem struct {

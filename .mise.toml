@@ -13,6 +13,7 @@ atlas = "latest"                                   # 声明式 schema 迁移管�
 
 # 质量门禁与任务编排
 lefthook = "latest"                                # Git Hooks 管理器（驱动 pre-commit / pre-push）
+gitleaks = "latest"                                # 敏感信息与硬编码密钥安全审计
 actionlint = "latest"                              # GitHub Actions 流程校验
 "npm:concurrently" = "latest"                      # 多任务并发执行（just dev）
 

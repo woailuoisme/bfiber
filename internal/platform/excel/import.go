@@ -14,7 +14,7 @@ import (
 	"github.com/samber/oops"
 	"github.com/xuri/excelize/v2"
 
-	"bgin/internal/platform/errs"
+	"bfiber/internal/platform/errs"
 )
 
 type importPipeline struct {
@@ -255,7 +255,7 @@ func spoolToDiskAndOpen(initialBuf []byte, remaining io.Reader, maxLimit int64, 
 		tempDir = os.TempDir()
 	}
 
-	tmpFile, err := os.CreateTemp(tempDir, "bgin-excel-spool-*.xlsx")
+	tmpFile, err := os.CreateTemp(tempDir, "bfiber-excel-spool-*.xlsx")
 	if err != nil {
 		return nil, nil, oops.Code(errs.CodeExcelTempFileError).Wrap(err)
 	}

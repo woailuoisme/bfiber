@@ -5,10 +5,10 @@ import (
 	"slices"
 	"time"
 
-	"bgin/internal/database/models"
-	"bgin/internal/platform/authentication"
-	"bgin/internal/platform/errs"
-	"bgin/internal/shared/enums"
+	"bfiber/internal/database/models"
+	"bfiber/internal/platform/authentication"
+	"bfiber/internal/platform/errs"
+	"bfiber/internal/shared/enums"
 )
 
 // ErrRoleRestricted 声明非目标角色访问受限错误（403 Forbidden）。

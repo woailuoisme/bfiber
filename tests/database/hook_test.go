@@ -14,9 +14,9 @@ import (
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 
-	"bgin/internal/config"
-	"bgin/internal/database"
-	"bgin/internal/platform/logger"
+	"bfiber/internal/config"
+	"bfiber/internal/database"
+	"bfiber/internal/platform/logger"
 )
 
 // setupTestLogger 构造将日志输出到内存 buffer 的上下文 logger。

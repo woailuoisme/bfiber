@@ -3,7 +3,7 @@
 # ==============================================================================
 # 本配置适用于 otel/opentelemetry-collector-contrib (v0.110+) 容器。
 # 数据流向：
-#   Gin Web API -> (OTLP gRPC :4317 / HTTP :4318) -> OTel Collector
+#   Fiber Web API -> (OTLP gRPC :4317 / HTTP :4318) -> OTel Collector
 #   -> [内存保护 memory_limiter] -> [环境/主机信息富化 resource_detection] -> [批聚合 batch]
 #   -> (OTLP/HTTP + 5000 缓冲队列 + 失败指数重试) -> OpenObserve (:5080)
 # ==============================================================================

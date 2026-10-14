@@ -22,13 +22,13 @@ import (
 	"github.com/samber/oops"
 	"go.uber.org/zap"
 
-	"bgin/internal/config"
-	"bgin/internal/platform/storage"
+	"bfiber/internal/config"
+	"bfiber/internal/platform/storage"
 )
 
 // Service 统一管理 PDF 文档的排版、渲染与多通道交付。
 //
-// 交付只依赖标准库的 http.ResponseWriter：任何 Web 框架（Gin/chi/net-http）
+// 交付只依赖标准库的 http.ResponseWriter：任何 Web 框架（Fiber/chi/net-http）
 // 都可以直接把自己的响应写入器传进来，平台层不感知具体框架。
 // 不在此定义消费方接口：调用方按需在自己一侧声明最小接口即可。
 type Service struct {

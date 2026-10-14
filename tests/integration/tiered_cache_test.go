@@ -12,8 +12,8 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"bgin/internal/config"
-	"bgin/internal/platform/cache"
+	"bfiber/internal/config"
+	"bfiber/internal/platform/cache"
 )
 
 // TestTieredCache_MultiInstance_Invalidation 验证两实例节点在真实 Redis 上的 L1 读与主动自失效通知。

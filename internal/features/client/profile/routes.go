@@ -1,17 +1,16 @@
-// Package profile 实现前端用户个人档案模块 (/v1/users/me)。
 package profile
 
 import (
-	"github.com/gin-gonic/gin"
+	"github.com/gofiber/fiber/v3"
 
-	"bgin/internal/middleware"
+	"bfiber/internal/middleware"
 )
 
 // RegisterRoutes 注册前端用户个人档案端点 (/v1/users)。
-func RegisterRoutes(router *gin.RouterGroup, handler *Handler, mw *middleware.Middleware) {
+func RegisterRoutes(router fiber.Router, handler *Handler, mw *middleware.Middleware) {
 	group := router.Group("/users", mw.Auth("client"), mw.Throttle(middleware.TierAuthenticated))
 
-	group.GET("/me", handler.GetProfile)
-	group.PATCH("/me", handler.UpdateProfile)
-	group.POST("/me/avatar", handler.UploadAvatar)
+	group.Get("/me", handler.GetProfile)
+	group.Patch("/me", handler.UpdateProfile)
+	group.Post("/me/avatar", handler.UploadAvatar)
 }

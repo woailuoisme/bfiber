@@ -6,6 +6,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"reflect"
+	"runtime"
 	"slices"
 	"strings"
 
@@ -14,11 +16,12 @@ import (
 	"charm.land/lipgloss/v2"
 	lipglosstable "charm.land/lipgloss/v2/table"
 	"github.com/charmbracelet/x/term"
+	"github.com/gofiber/fiber/v3"
 	"github.com/spf13/cobra"
 
-	"bgin/internal/bootstrap"
-	"bgin/internal/config"
-	"bgin/internal/console/core"
+	"bfiber/internal/bootstrap"
+	"bfiber/internal/config"
+	"bfiber/internal/console/core"
 )
 
 // RouteEntry 描述解析提取后的单条 HTTP 路由信息。
@@ -77,7 +80,7 @@ func (o *RouteListOptions) Run(_ context.Context) error {
 		return fmt.Errorf("failed to inspect engine routes: %w", err)
 	}
 
-	rawRoutes := engine.Routes()
+	rawRoutes := engine.GetRoutes(true)
 	routes := make([]RouteEntry, 0, len(rawRoutes))
 	for _, r := range rawRoutes {
 		if o.MethodFilter != "" && !strings.EqualFold(r.Method, o.MethodFilter) {
@@ -87,11 +90,12 @@ func (o *RouteListOptions) Run(_ context.Context) error {
 			continue
 		}
 
+		handlerName := resolveRouteHandlerName(r)
 		routes = append(routes, RouteEntry{
 			Method:     r.Method,
 			Path:       r.Path,
-			Handler:    formatHandlerName(r.Handler),
-			RawHandler: r.Handler,
+			Handler:    formatHandlerName(handlerName),
+			RawHandler: handlerName,
 		})
 	}
 
@@ -164,9 +168,9 @@ func formatHandlerName(raw string) string {
 		return "-"
 	}
 	s = strings.TrimSuffix(s, "-fm")
-	s = strings.TrimPrefix(s, "bgin/internal/features/")
-	s = strings.TrimPrefix(s, "bgin/internal/")
-	s = strings.TrimPrefix(s, "bgin/")
+	s = strings.TrimPrefix(s, "bfiber/internal/features/")
+	s = strings.TrimPrefix(s, "bfiber/internal/")
+	s = strings.TrimPrefix(s, "bfiber/")
 	s = strings.ReplaceAll(s, ".(*Handler).", ".Handler.")
 	return s
 }
@@ -314,4 +318,20 @@ func runInteractiveRouteTable(streams *core.IOStreams, routes []RouteEntry) erro
 	p := tea.NewProgram(m, tea.WithOutput(streams.Out))
 	_, err := p.Run()
 	return err
+}
+
+// resolveRouteHandlerName 解析 Fiber 路由对应的处理器名称。
+func resolveRouteHandlerName(r fiber.Route) string {
+	if r.Name != "" {
+		return r.Name
+	}
+	if len(r.Handlers) == 0 {
+		return "-"
+	}
+	fn := r.Handlers[len(r.Handlers)-1]
+	ptr := reflect.ValueOf(fn).Pointer()
+	if rf := runtime.FuncForPC(ptr); rf != nil {
+		return rf.Name()
+	}
+	return "-"
 }

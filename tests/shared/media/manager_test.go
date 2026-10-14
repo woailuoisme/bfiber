@@ -8,10 +8,10 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"bgin/internal/config"
-	"bgin/internal/database/models"
-	"bgin/internal/platform/storage"
-	"bgin/internal/shared/media"
+	"bfiber/internal/config"
+	"bfiber/internal/database/models"
+	"bfiber/internal/platform/storage"
+	"bfiber/internal/shared/media"
 )
 
 func TestManager_ContractsAndURLDerivation(t *testing.T) {

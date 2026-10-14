@@ -6,9 +6,9 @@ import (
 
 	"github.com/google/uuid"
 
-	"bgin/internal/database"
-	"bgin/internal/database/models"
-	"bgin/internal/shared/enums"
+	"bfiber/internal/database"
+	"bfiber/internal/database/models"
+	"bfiber/internal/shared/enums"
 )
 
 // UserFixtureBuilder 负责以链式 DSL 构造结构合法的 User 测试实体。

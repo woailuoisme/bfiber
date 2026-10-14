@@ -1,13 +1,13 @@
 # OpenTelemetry Collector Contrib 与 OpenObserve 接入最佳实践
 
-本文档说明如何将本工程（Gin + Bun ORM）与已运行的 `otel/opentelemetry-collector-contrib` 以及 `OpenObserve` 可观测性平台联动配合。
+本文档说明如何将本工程（Fiber + Bun ORM）与已运行的 `otel/opentelemetry-collector-contrib` 以及 `OpenObserve` 可观测性平台联动配合。
 
 ---
 
 ## 1. 架构总览 (Architecture)
 
 ```
-[ Gin Web API (bgin) ]
+[ Fiber Web API (bfiber) ]
         │
         ▼  OTLP/gRPC (默认 :4317，经单连接多路复用高效推流)
 [ otel/opentelemetry-collector-contrib ]
@@ -35,7 +35,7 @@ OpenObserve 的 OTLP 接入依赖 HTTP Basic 认证：
 
 ---
 
-## 3. 在 bgin 应用中开启遥测 (Application Activation)
+## 3. 在 bfiber 应用中开启遥测 (Application Activation)
 
 在 `.env` 或容器环境变量中设置：
 
@@ -50,7 +50,7 @@ OTEL_EXPORTER_OTLP_ENDPOINT=http://127.0.0.1:4317
 OTEL_INSECURE=true
 
 # 服务标识（在 OpenObserve 中呈现的服务名）
-OTEL_SERVICE_NAME=bgin
+OTEL_SERVICE_NAME=bfiber
 
 # 追踪采样率（1.0 表示 100% 全量采样，生产高吞吐环境建议根据需要调整如 0.2）
 OTEL_TRACES_SAMPLE_RATIO=1.0

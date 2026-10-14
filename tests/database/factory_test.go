@@ -8,8 +8,8 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"bgin/internal/database/factories"
-	"bgin/internal/database/models"
+	"bfiber/internal/database/factories"
+	"bfiber/internal/database/models"
 )
 
 func TestFactory_InMemoryMake(t *testing.T) {

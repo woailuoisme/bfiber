@@ -6,63 +6,69 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"github.com/gin-gonic/gin"
-	"github.com/gin-gonic/gin/binding"
+	"github.com/gofiber/fiber/v3"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"bgin/internal/middleware/global"
+	"bfiber/internal/middleware/global"
 )
 
 type testPayload struct {
 	Message string `json:"message"`
 }
 
-// TestCacheBodyMultiPassBinding 验证 CacheBody 中间件与 ShouldBindBodyWith 对多道绑定的支持。
-func TestCacheBodyMultiPassBinding(t *testing.T) {
-	gin.SetMode(gin.TestMode)
-	m := global.New(global.Deps{})
-
-	router := gin.New()
-	router.Use(m.CacheBody())
+// TestBodyMultiPassBinding 验证 Fiber 原生多次读取与绑定 Body 的能力。
+func TestBodyMultiPassBinding(t *testing.T) {
+	app := fiber.New()
 
 	var firstRead, secondRead testPayload
-	var bodyKeyBytes []byte
+	var bodyBytes []byte
 
-	router.POST("/multi-pass", func(c *gin.Context) {
-		// 第一次绑定：通过 ShouldBindBodyWith
-		err := c.ShouldBindBodyWith(&firstRead, binding.JSON)
-		if err != nil {
-			c.AbortWithStatus(http.StatusBadRequest)
-			return
+	app.Post("/multi-pass", func(c fiber.Ctx) error {
+		if err := c.Bind().Body(&firstRead); err != nil {
+			return c.SendStatus(fiber.StatusBadRequest)
 		}
 
-		// 第二次绑定：通过普通 ShouldBindJSON 验证流已被回写可复用
-		err = c.ShouldBindJSON(&secondRead)
-		if err != nil {
-			c.AbortWithStatus(http.StatusInternalServerError)
-			return
+		if err := c.Bind().Body(&secondRead); err != nil {
+			return c.SendStatus(fiber.StatusInternalServerError)
 		}
 
-		// 验证 gin.BodyBytesKey 上下文缓存
-		if cb, ok := c.Get(gin.BodyBytesKey); ok {
-			if bytesVal, ok := cb.([]byte); ok {
-				bodyKeyBytes = bytesVal
-			}
-		}
-
-		c.Status(http.StatusOK)
+		bodyBytes = c.Body()
+		return c.SendStatus(fiber.StatusOK)
 	})
 
-	body := []byte(`{"message":"hello gin"}`)
+	body := []byte(`{"message":"hello fiber"}`)
 	req := httptest.NewRequest(http.MethodPost, "/multi-pass", bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
-	w := httptest.NewRecorder()
 
-	router.ServeHTTP(w, req)
+	resp, err := app.Test(req, fiber.TestConfig{Timeout: 0})
+	require.NoError(t, err)
+	require.Equal(t, fiber.StatusOK, resp.StatusCode)
+	assert.Equal(t, "hello fiber", firstRead.Message)
+	assert.Equal(t, "hello fiber", secondRead.Message)
+	assert.Equal(t, body, bodyBytes)
+}
 
-	require.Equal(t, http.StatusOK, w.Code)
-	assert.Equal(t, "hello gin", firstRead.Message)
-	assert.Equal(t, "hello gin", secondRead.Message)
-	assert.Equal(t, body, bodyKeyBytes)
+// TestSecurityHeaders_Injection 验证安全响应头正确注入。
+func TestSecurityHeaders_Injection(t *testing.T) {
+	m := global.New(global.Deps{
+		Production: true,
+	})
+
+	app := fiber.New()
+	app.Use(m.SecurityHeaders())
+	app.Get("/test", func(c fiber.Ctx) error {
+		return c.SendStatus(fiber.StatusOK)
+	})
+
+	req := httptest.NewRequest(http.MethodGet, "/test", nil)
+	resp, err := app.Test(req, fiber.TestConfig{Timeout: 0})
+	require.NoError(t, err)
+
+	assert.Equal(t, fiber.StatusOK, resp.StatusCode)
+	assert.Equal(t, "nosniff", resp.Header.Get("X-Content-Type-Options"))
+	assert.Equal(t, "DENY", resp.Header.Get("X-Frame-Options"))
+	assert.Equal(t, "no-referrer", resp.Header.Get("Referrer-Policy"))
+	assert.Equal(t, "none", resp.Header.Get("X-Permitted-Cross-Domain-Policies"))
+	assert.Equal(t, "max-age=31536000; includeSubDomains; preload", resp.Header.Get("Strict-Transport-Security"))
 }

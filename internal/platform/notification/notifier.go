@@ -14,15 +14,15 @@ import (
 	"go.uber.org/zap"
 	"golang.org/x/sync/errgroup"
 
-	"bgin/internal/platform/errs"
-	"bgin/internal/platform/logger"
-	"bgin/internal/platform/notification/async"
-	"bgin/internal/platform/notification/channel/chat"
-	"bgin/internal/platform/notification/channel/mail"
-	"bgin/internal/platform/notification/channel/realtime"
-	"bgin/internal/platform/notification/channel/sms"
-	"bgin/internal/platform/notification/contract"
-	"bgin/internal/platform/queue"
+	"bfiber/internal/platform/errs"
+	"bfiber/internal/platform/logger"
+	"bfiber/internal/platform/notification/async"
+	"bfiber/internal/platform/notification/channel/chat"
+	"bfiber/internal/platform/notification/channel/mail"
+	"bfiber/internal/platform/notification/channel/realtime"
+	"bfiber/internal/platform/notification/channel/sms"
+	"bfiber/internal/platform/notification/contract"
+	"bfiber/internal/platform/queue"
 )
 
 // defaultParallelTargets 是并行投递单个通知时的最大并发接收者数。

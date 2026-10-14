@@ -2,13 +2,14 @@ package profile
 
 import (
 	"github.com/aarondl/opt/omitnull"
-	"github.com/gin-gonic/gin"
+	"github.com/gofiber/fiber/v3"
 
-	"bgin/internal/platform/authentication"
-	"bgin/internal/platform/errs"
-	"bgin/internal/platform/response"
-	"bgin/internal/shared/media"
-	"bgin/internal/shared/user"
+	"bfiber/internal/platform/authentication"
+	"bfiber/internal/platform/errs"
+	"bfiber/internal/platform/response"
+	"bfiber/internal/platform/validator"
+	"bfiber/internal/shared/media"
+	"bfiber/internal/shared/user"
 )
 
 // Handler 是本人档案端点的 HTTP 适配层。
@@ -25,13 +26,12 @@ func NewHandler(userService *user.Service, mediaManager *media.Manager) *Handler
 	}
 }
 
-func (h *Handler) currentUserID(c *gin.Context) (string, bool) {
-	id, ok := authentication.FromContext(c.Request.Context())
+func (h *Handler) currentUserID(c fiber.Ctx) (string, error) {
+	id, ok := authentication.FromContext(c.Context())
 	if !ok {
-		_ = c.Error(errs.Unauthorized(errs.CodeAuthTokenInvalid, "Authentication is required"))
-		return "", false
+		return "", errs.Unauthorized(errs.CodeAuthTokenInvalid, "Authentication is required")
 	}
-	return id.UserID, true
+	return id.UserID, nil
 }
 
 // GetProfile 处理 GET /v1/users/me。
@@ -44,18 +44,17 @@ func (h *Handler) currentUserID(c *gin.Context) (string, bool) {
 // @Success      200 {object} ProfileResource "本人档案"
 // @x-order      1
 // @Router       /users/me [get]
-func (h *Handler) GetProfile(c *gin.Context) {
-	userID, ok := h.currentUserID(c)
-	if !ok {
-		return
+func (h *Handler) GetProfile(c fiber.Ctx) error {
+	userID, err := h.currentUserID(c)
+	if err != nil {
+		return err
 	}
 
-	profile, err := h.userService.GetProfile(c.Request.Context(), userID)
+	profile, err := h.userService.GetProfile(c.Context(), userID)
 	if err != nil {
-		_ = c.Error(err)
-		return
+		return err
 	}
-	response.OK(c, profile)
+	return response.OK(c, profile)
 }
 
 // UpdateProfile 处理 PATCH /v1/users/me。
@@ -70,24 +69,22 @@ func (h *Handler) GetProfile(c *gin.Context) {
 // @Success      200 {object} ProfileResource "更新后的档案"
 // @x-order      2
 // @Router       /users/me [patch]
-func (h *Handler) UpdateProfile(c *gin.Context) {
-	userID, ok := h.currentUserID(c)
-	if !ok {
-		return
+func (h *Handler) UpdateProfile(c fiber.Ctx) error {
+	userID, err := h.currentUserID(c)
+	if err != nil {
+		return err
 	}
 
 	var body UpdateProfileBody
-	if err := c.ShouldBindJSON(&body); err != nil {
-		_ = c.Error(err)
-		return
+	if err := c.Bind().Body(&body); err != nil {
+		return err
 	}
 
-	profile, err := h.userService.UpdateProfile(c.Request.Context(), userID, body.fieldSet(), user.ScopeClient)
+	profile, err := h.userService.UpdateProfile(c.Context(), userID, body.fieldSet(), user.ScopeClient)
 	if err != nil {
-		_ = c.Error(err)
-		return
+		return err
 	}
-	response.OK(c, profile)
+	return response.OK(c, profile)
 }
 
 // UploadAvatar 处理 POST /v1/users/me/avatar。
@@ -104,26 +101,25 @@ func (h *Handler) UpdateProfile(c *gin.Context) {
 // @Failure      422 {object} errs.Response "文件校验失败"
 // @x-order      3
 // @Router       /users/me/avatar [post]
-func (h *Handler) UploadAvatar(c *gin.Context) {
-	userID, ok := h.currentUserID(c)
-	if !ok {
-		return
-	}
-
-	var body UploadAvatarBody
-	if err := c.ShouldBind(&body); err != nil {
-		_ = c.Error(err)
-		return
-	}
-
-	avatarURL, err := h.mediaManager.AttachAvatar(c.Request.Context(), userID, body.Avatar)
+func (h *Handler) UploadAvatar(c fiber.Ctx) error {
+	userID, err := h.currentUserID(c)
 	if err != nil {
-		_ = c.Error(err)
-		return
+		return err
+	}
+
+	file, _ := c.FormFile("avatar")
+	body := UploadAvatarBody{Avatar: file}
+	if err := validator.Engine().Struct(body); err != nil {
+		return err
+	}
+
+	avatarURL, err := h.mediaManager.AttachAvatar(c.Context(), userID, body.Avatar)
+	if err != nil {
+		return err
 	}
 
 	profile, err := h.userService.UpdateProfile(
-		c.Request.Context(),
+		c.Context(),
 		userID,
 		user.FieldSet{
 			Image: omitnull.From(avatarURL),
@@ -131,9 +127,8 @@ func (h *Handler) UploadAvatar(c *gin.Context) {
 		user.ScopeClient,
 	)
 	if err != nil {
-		_ = c.Error(err)
-		return
+		return err
 	}
 
-	response.OK(c, profile)
+	return response.OK(c, profile)
 }

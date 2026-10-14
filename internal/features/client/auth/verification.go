@@ -17,11 +17,11 @@ import (
 	"github.com/uptrace/bun"
 	"go.uber.org/zap"
 
-	"bgin/internal/config"
-	"bgin/internal/database/models"
-	"bgin/internal/platform/cache"
-	"bgin/internal/platform/errs"
-	"bgin/internal/platform/logger"
+	"bfiber/internal/config"
+	"bfiber/internal/database/models"
+	"bfiber/internal/platform/cache"
+	"bfiber/internal/platform/errs"
+	"bfiber/internal/platform/logger"
 )
 
 // 一次性凭据的底层存储用途前缀（写入 verification.identifier），使同一邮箱的不同用途在库中互不干扰。

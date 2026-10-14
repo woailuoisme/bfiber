@@ -11,8 +11,8 @@ import (
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 
-	"bgin/internal/config"
-	platformsentry "bgin/internal/platform/sentry"
+	"bfiber/internal/config"
+	platformsentry "bfiber/internal/platform/sentry"
 )
 
 // TestSentryConfig 验证 Sentry 与 GlitchTip 别名配置优先级及启用判定。
@@ -55,7 +55,7 @@ func TestSentryConfig(t *testing.T) {
 func TestSentry_InitDisabled(t *testing.T) {
 	t.Run("empty DSN is no-op", func(t *testing.T) {
 		cfg := config.SentryConfig{DSN: ""}
-		flush, err := platformsentry.Init(cfg, "bgin", "testing", "1.0.0")
+		flush, err := platformsentry.Init(cfg, "bfiber", "testing", "1.0.0")
 		require.NoError(t, err)
 		require.NotNil(t, flush)
 		flush()
@@ -67,7 +67,7 @@ func TestSentry_InitDisabled(t *testing.T) {
 			Enabled: &disabled,
 			DSN:     "http://invalid@localhost:18080/1",
 		}
-		flush, err := platformsentry.Init(cfg, "bgin", "testing", "1.0.0")
+		flush, err := platformsentry.Init(cfg, "bfiber", "testing", "1.0.0")
 		require.NoError(t, err)
 		require.NotNil(t, flush)
 		flush()
@@ -79,11 +79,11 @@ func TestSentry_InitAndCapture(t *testing.T) {
 	cfg := config.SentryConfig{
 		DSN:              "http://a2966c81939745ae99fcfdc4fe4c3f0e@localhost:18080/1",
 		Environment:      "test",
-		Release:          "bgin@1.0.0",
+		Release:          "bfiber@1.0.0",
 		TracesSampleRate: 0.1,
 	}
 
-	flush, err := platformsentry.Init(cfg, "bgin", "testing", "1.0.0")
+	flush, err := platformsentry.Init(cfg, "bfiber", "testing", "1.0.0")
 	require.NoError(t, err)
 	require.NotNil(t, flush)
 	defer flush()

@@ -5,26 +5,26 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"testing"
 
-	"github.com/gin-gonic/gin"
+	"github.com/gofiber/fiber/v3"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/zap"
 
-	"bgin/internal/config"
-	featurePayment "bgin/internal/features/payment"
-	"bgin/internal/middleware/global"
-	platformPayment "bgin/internal/platform/payment"
-	"bgin/internal/platform/payment/enums"
+	"bfiber/internal/config"
+	featurePayment "bfiber/internal/features/payment"
+	"bfiber/internal/middleware/global"
+	platformPayment "bfiber/internal/platform/payment"
+	"bfiber/internal/platform/payment/enums"
 )
 
-// setupPaymentTest 构造测试用的 Gin 引擎、服务实例与 Fake 支付管理器。
-func setupPaymentTest(t *testing.T) (*gin.Engine, *featurePayment.Service, *platformPayment.Manager) {
+// setupPaymentTest 构造测试用的 Fiber 引擎、服务实例与 Fake 支付管理器。
+func setupPaymentTest(t *testing.T) (*fiber.App, *featurePayment.Service, *platformPayment.Manager) {
 	t.Helper()
-	gin.SetMode(gin.TestMode)
 
 	cfg := &config.Config{
 		App: config.AppConfig{
@@ -43,12 +43,28 @@ func setupPaymentTest(t *testing.T) (*gin.Engine, *featurePayment.Service, *plat
 	svc := featurePayment.NewService(mgr, nil, cfg, nil)
 	handler := featurePayment.NewHandler(svc)
 
-	engine := gin.New()
-	engine.Use(global.New(global.Deps{}).ErrorHandler())
-	v1 := engine.Group("/v1")
+	app := fiber.New(fiber.Config{
+		ErrorHandler: global.New(global.Deps{}).ErrorHandler(),
+	})
+	v1 := app.Group("/v1")
 	featurePayment.RegisterRoutes(v1, handler, nil)
 
-	return engine, svc, mgr
+	return app, svc, mgr
+}
+
+func serveHTTP(t *testing.T, app *fiber.App, w *httptest.ResponseRecorder, req *http.Request) {
+	t.Helper()
+	resp, err := app.Test(req, fiber.TestConfig{Timeout: 0})
+	require.NoError(t, err)
+	defer func() { _ = resp.Body.Close() }()
+	w.Code = resp.StatusCode
+	for k, vv := range resp.Header {
+		for _, v := range vv {
+			w.Header().Add(k, v)
+		}
+	}
+	body, _ := io.ReadAll(resp.Body)
+	w.Body.Write(body)
 }
 
 // getFakeProvider 从管理器中提取指定渠道的 Fake Provider。
@@ -117,7 +133,7 @@ func TestHandleNotification_WechatPaymentSuccess(t *testing.T) {
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
 
-	engine.ServeHTTP(w, req)
+	serveHTTP(t, engine, w, req)
 
 	assert.Equal(t, http.StatusOK, w.Code)
 	assert.Contains(t, w.Header().Get("Content-Type"), "application/json")
@@ -157,7 +173,7 @@ func TestHandleNotification_WechatRefundSuccess(t *testing.T) {
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
 
-	engine.ServeHTTP(w, req)
+	serveHTTP(t, engine, w, req)
 
 	assert.Equal(t, http.StatusOK, w.Code)
 	assert.JSONEq(t, `{"code":"SUCCESS","message":"OK"}`, w.Body.String())
@@ -194,7 +210,7 @@ func TestHandleNotification_AlipayPaymentSuccess(t *testing.T) {
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	w := httptest.NewRecorder()
 
-	engine.ServeHTTP(w, req)
+	serveHTTP(t, engine, w, req)
 
 	assert.Equal(t, http.StatusOK, w.Code)
 	assert.Contains(t, w.Header().Get("Content-Type"), "text/plain")
@@ -228,7 +244,7 @@ func TestHandleNotification_CustomAppKey(t *testing.T) {
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
 
-	engine.ServeHTTP(w, req)
+	serveHTTP(t, engine, w, req)
 
 	assert.Equal(t, http.StatusOK, w.Code)
 	assert.JSONEq(t, `{"code":"SUCCESS","message":"OK"}`, w.Body.String())
@@ -259,7 +275,7 @@ func TestHandleNotification_BusinessFailure_TriggersRetry(t *testing.T) {
 		req.Header.Set("Content-Type", "application/json")
 		w := httptest.NewRecorder()
 
-		engine.ServeHTTP(w, req)
+		serveHTTP(t, engine, w, req)
 
 		// 微信端要求返回 200 且 body 包含 FAIL 触发重试
 		assert.Equal(t, http.StatusOK, w.Code)
@@ -289,7 +305,7 @@ func TestHandleNotification_BusinessFailure_TriggersRetry(t *testing.T) {
 		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 		w := httptest.NewRecorder()
 
-		engine.ServeHTTP(w, req)
+		serveHTTP(t, engine, w, req)
 
 		// 支付宝要求返回 fail 字符串触发重试
 		assert.Equal(t, http.StatusOK, w.Code)
@@ -307,7 +323,7 @@ func TestHandleNotification_UnsupportedChannel(t *testing.T) {
 	)
 	w := httptest.NewRecorder()
 
-	engine.ServeHTTP(w, req)
+	serveHTTP(t, engine, w, req)
 
 	assert.Equal(t, http.StatusBadRequest, w.Code)
 }
@@ -324,7 +340,7 @@ func TestHandleNotification_VerifySignatureFailure(t *testing.T) {
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
 
-	engine.ServeHTTP(w, req)
+	serveHTTP(t, engine, w, req)
 
 	assert.Equal(t, http.StatusOK, w.Code)
 	assert.JSONEq(t, `{"code":"FAIL","message":"FAIL"}`, w.Body.String())
@@ -350,7 +366,7 @@ func TestHandleAlipayReturn_Success(t *testing.T) {
 	)
 	w := httptest.NewRecorder()
 
-	engine.ServeHTTP(w, req)
+	serveHTTP(t, engine, w, req)
 
 	assert.Equal(t, http.StatusFound, w.Code)
 	expectedURL := "https://shop.example.com/orders/ORDER_ALI_RETURN_001?status=success"
@@ -368,7 +384,7 @@ func TestHandleAlipayReturn_Failure(t *testing.T) {
 	)
 	w := httptest.NewRecorder()
 
-	engine.ServeHTTP(w, req)
+	serveHTTP(t, engine, w, req)
 
 	assert.Equal(t, http.StatusFound, w.Code)
 	expectedURL := "https://shop.example.com/orders?status=failed"
@@ -376,7 +392,6 @@ func TestHandleAlipayReturn_Failure(t *testing.T) {
 }
 
 func TestHandleNotification_GatewayNotInitialized(t *testing.T) {
-	gin.SetMode(gin.TestMode)
 	cfg := &config.Config{
 		App: config.AppConfig{URL: "https://shop.example.com"},
 	}
@@ -384,8 +399,8 @@ func TestHandleNotification_GatewayNotInitialized(t *testing.T) {
 	svc := featurePayment.NewService(nil, nil, cfg, nil)
 	handler := featurePayment.NewHandler(svc)
 
-	engine := gin.New()
-	v1 := engine.Group("/v1")
+	app := fiber.New()
+	v1 := app.Group("/v1")
 	featurePayment.RegisterRoutes(v1, handler, nil)
 
 	req := httptest.NewRequest(
@@ -395,7 +410,7 @@ func TestHandleNotification_GatewayNotInitialized(t *testing.T) {
 	)
 	w := httptest.NewRecorder()
 
-	engine.ServeHTTP(w, req)
+	serveHTTP(t, app, w, req)
 
 	assert.Equal(t, http.StatusOK, w.Code)
 	assert.JSONEq(t, `{"code":"FAIL","message":"FAIL"}`, w.Body.String())

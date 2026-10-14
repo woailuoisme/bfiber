@@ -11,11 +11,11 @@ type PaymentNotifyPathParams struct {
 // AlipayReturnQueryParams 描述支付宝同步跳转 (return_url) 携带的查询参数。
 type AlipayReturnQueryParams struct {
 	// 商户订单号
-	OutTradeNo string `form:"out_trade_no" json:"outTradeNo" example:"ORDER_20260927_001"`
+	OutTradeNo string `form:"out_trade_no" query:"out_trade_no" json:"outTradeNo" example:"ORDER_20260927_001"`
 	// 支付宝交易凭证号
-	TradeNo string `form:"trade_no" json:"tradeNo" example:"2026092722001400000000000000"`
+	TradeNo string `form:"trade_no" query:"trade_no" json:"tradeNo" example:"2026092722001400000000000000"`
 	// 交易金额 (元)
-	TotalAmount string `form:"total_amount" json:"totalAmount" example:"88.00"`
+	TotalAmount string `form:"total_amount" query:"total_amount" json:"totalAmount" example:"88.00"`
 }
 
 // CallbackAckResource 描述支付网关向渠道返回的应答状态。

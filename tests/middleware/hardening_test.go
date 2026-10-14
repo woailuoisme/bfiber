@@ -1,69 +1,81 @@
 package middleware_test
 
 import (
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"testing"
 
-	"github.com/gin-gonic/gin"
+	"github.com/gofiber/fiber/v3"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"bgin/internal/middleware/global"
+	"bfiber/internal/middleware/global"
 )
 
 // TestSecurityHeaders 锁定安全响应头这道防线，以及 HSTS 只在生产下发的边界。
 func TestSecurityHeaders(t *testing.T) {
-	gin.SetMode(gin.TestMode)
-
-	serve := func(production bool) *httptest.ResponseRecorder {
+	serve := func(production bool) *http.Response {
 		mw := global.New(global.Deps{Production: production})
-		engine := gin.New()
-		engine.Use(mw.SecurityHeaders())
-		engine.GET("/ping", func(c *gin.Context) { c.String(http.StatusOK, "pong") })
+		app := fiber.New()
+		app.Use(mw.SecurityHeaders())
+		app.Get("/ping", func(c fiber.Ctx) error {
+			return c.SendString("pong")
+		})
 
-		rec := httptest.NewRecorder()
-		engine.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/ping", nil))
-		return rec
+		req := httptest.NewRequest(http.MethodGet, "/ping", nil)
+		resp, err := app.Test(req, fiber.TestConfig{Timeout: 0})
+		require.NoError(t, err)
+		return resp
 	}
 
 	t.Run("基础防护头始终下发", func(t *testing.T) {
-		rec := serve(false)
+		resp := serve(false)
+		defer func() { _ = resp.Body.Close() }()
 
-		require.Equal(t, http.StatusOK, rec.Code)
-		assert.Equal(t, "nosniff", rec.Header().Get("X-Content-Type-Options"))
-		assert.Equal(t, "DENY", rec.Header().Get("X-Frame-Options"))
-		assert.Equal(t, "no-referrer", rec.Header().Get("Referrer-Policy"))
-		assert.Equal(t, "none", rec.Header().Get("X-Permitted-Cross-Domain-Policies"))
-		assert.Equal(t, "camera=(), microphone=(), geolocation=(), payment=()", rec.Header().Get("Permissions-Policy"))
+		require.Equal(t, http.StatusOK, resp.StatusCode)
+		assert.Equal(t, "nosniff", resp.Header.Get("X-Content-Type-Options"))
+		assert.Equal(t, "DENY", resp.Header.Get("X-Frame-Options"))
+		assert.Equal(t, "no-referrer", resp.Header.Get("Referrer-Policy"))
+		assert.Equal(t, "none", resp.Header.Get("X-Permitted-Cross-Domain-Policies"))
+		assert.Equal(t, "camera=(), microphone=(), geolocation=(), payment=()", resp.Header.Get("Permissions-Policy"))
 	})
 
 	t.Run("HSTS 只在生产下发", func(t *testing.T) {
-		// 本地开发走 http：浏览器一旦记住 HSTS，后续 http 请求会被升级成 https 而连不上，
-		// 且这个决定无法靠改服务端撤销。
-		assert.Empty(t, serve(false).Header().Get("Strict-Transport-Security"))
-		assert.Equal(t, "max-age=31536000; includeSubDomains; preload", serve(true).Header().Get("Strict-Transport-Security"))
+		respDev := serve(false)
+		defer func() { _ = respDev.Body.Close() }()
+		assert.Empty(t, respDev.Header.Get("Strict-Transport-Security"))
+
+		respProd := serve(true)
+		defer func() { _ = respProd.Body.Close() }()
+		assert.Equal(t, "max-age=31536000; includeSubDomains; preload", respProd.Header.Get("Strict-Transport-Security"))
 	})
 }
 
 // TestRecovery 锁定 panic 边界的对外行为：状态码统一为 500，响应体不带任何内部细节。
 func TestRecovery(t *testing.T) {
-	gin.SetMode(gin.TestMode)
 	mw := global.New(global.Deps{})
 
-	engine := gin.New()
-	// 链序与生产一致：Recovery 只负责恢复并记日志，500 由更外层的 ErrorHandler 统一渲染；
-	// 不挂 RequestID（它会把 Deps.Logger 交给 logger.WithContext，本测试未提供日志器）。
-	engine.Use(mw.ErrorHandler(), mw.Recovery())
-	engine.GET("/boom", func(_ *gin.Context) {
+	app := fiber.New(fiber.Config{
+		ErrorHandler: mw.ErrorHandler(),
+	})
+	// 链序与生产一致：Recovery 只负责恢复并记日志，500 由更外层的 ErrorHandler 统一渲染
+	app.Use(mw.Recovery())
+	app.Get("/boom", func(_ fiber.Ctx) error {
 		panic("secret-internal-detail")
 	})
 
-	rec := httptest.NewRecorder()
-	engine.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/boom", nil))
+	req := httptest.NewRequest(http.MethodGet, "/boom", nil)
+	resp, err := app.Test(req, fiber.TestConfig{Timeout: 0})
+	require.NoError(t, err)
+	defer func() { _ = resp.Body.Close() }()
 
-	require.Equal(t, http.StatusInternalServerError, rec.Code)
-	assert.Contains(t, rec.Body.String(), "INTERNAL_SERVER_ERROR")
-	assert.NotContains(t, rec.Body.String(), "secret-internal-detail",
+	bodyBytes, err := io.ReadAll(resp.Body)
+	require.NoError(t, err)
+	bodyStr := string(bodyBytes)
+
+	require.Equal(t, http.StatusInternalServerError, resp.StatusCode)
+	assert.Contains(t, bodyStr, "INTERNAL_SERVER_ERROR")
+	assert.NotContains(t, bodyStr, "secret-internal-detail",
 		"panic 详情只能进日志，绝不能出现在响应体里")
 }

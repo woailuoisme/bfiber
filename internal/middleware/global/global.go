@@ -8,7 +8,6 @@
 //   - Timeout: 请求生命周期超时控制 (504 Gateway Timeout)
 //   - SecurityHeaders: 浏览器安全标头注入 (nosniff, DENY, HSTS 等)
 //   - BodyLimit: 请求体大小限制 (非上传 1MiB，上传 32MiB)
-//   - CacheBody: 请求体流多道缓存 (gin.BodyBytesKey)
 //   - Idempotency: HTTP 幂等性控制 (Idempotency-Key)
 //   - CORS: 跨域资源共享策略与预检处理
 package global
@@ -16,12 +15,11 @@ package global
 import (
 	"time"
 
-	"github.com/gin-gonic/gin"
 	"go.uber.org/zap"
 
-	"bgin/internal/config"
-	"bgin/internal/platform/cache"
-	"bgin/internal/platform/i18n"
+	"bfiber/internal/config"
+	"bfiber/internal/platform/cache"
+	"bfiber/internal/platform/i18n"
 )
 
 // Deps 描述全局中间件所需的全部外部依赖。
@@ -64,8 +62,7 @@ func New(deps Deps) *Middleware {
 	}
 }
 
-// abortWithError 向上下文附加错误并立即中止后续处理。
-func abortWithError(c *gin.Context, err error) {
-	_ = c.Error(err)
-	c.Abort()
+// Logger 返回全局中间件持有的 Zap 实例。
+func (m *Middleware) Logger() *zap.Logger {
+	return m.logger
 }

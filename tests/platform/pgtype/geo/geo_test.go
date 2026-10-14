@@ -15,7 +15,7 @@ import (
 	"github.com/uptrace/bun"
 	"github.com/uptrace/bun/dialect/pgdialect"
 
-	"bgin/internal/platform/pgtype/geo"
+	"bfiber/internal/platform/pgtype/geo"
 )
 
 // TestPoint_Basic 验证空间点的构造、访问器、修改器及 WKT 格式化。

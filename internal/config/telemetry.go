@@ -22,7 +22,7 @@ func (t *TelemetryConfig) EffectiveServiceName(appName string) string {
 	if s := strings.TrimSpace(t.ServiceName); s != "" {
 		return s
 	}
-	return cmp.Or(appName, "bgin")
+	return cmp.Or(appName, "bfiber")
 }
 
 // EffectiveEndpoint 获取有效 Collector 目标地址（默认 http://127.0.0.1:4317）。

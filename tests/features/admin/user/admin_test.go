@@ -11,8 +11,8 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	admin "bgin/internal/features/admin/user"
-	"bgin/internal/shared/user"
+	admin "bfiber/internal/features/admin/user"
+	"bfiber/internal/shared/user"
 )
 
 // api.md 6.1 规定的分页默认值与上限。

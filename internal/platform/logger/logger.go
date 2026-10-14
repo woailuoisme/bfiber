@@ -21,7 +21,7 @@ import (
 	"go.uber.org/zap/buffer"
 	"go.uber.org/zap/zapcore"
 
-	"bgin/internal/config"
+	"bfiber/internal/config"
 )
 
 // ctxKey 是日志器在 context 中的私有键，避免与其他包产生键名冲突。

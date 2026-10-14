@@ -5,7 +5,7 @@ import (
 	"sync"
 	"time"
 
-	"bgin/internal/platform/errs"
+	"bfiber/internal/platform/errs"
 )
 
 // AlwaysAllowGate 是无条件放行所有权限请求的测试桩。

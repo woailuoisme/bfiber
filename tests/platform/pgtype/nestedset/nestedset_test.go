@@ -12,7 +12,7 @@ import (
 	"github.com/uptrace/bun"
 	"github.com/uptrace/bun/dialect/pgdialect"
 
-	"bgin/internal/platform/pgtype/nestedset"
+	"bfiber/internal/platform/pgtype/nestedset"
 )
 
 // TestPath_Basic 验证 ltree 路径的基本构造、分段、深度与父子派生。

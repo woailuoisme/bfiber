@@ -7,8 +7,8 @@ import (
 
 	"github.com/uptrace/bun"
 
-	"bgin/internal/database/models"
-	"bgin/internal/platform/errs"
+	"bfiber/internal/database/models"
+	"bfiber/internal/platform/errs"
 )
 
 // Scope 声明档案更新的权限作用域。

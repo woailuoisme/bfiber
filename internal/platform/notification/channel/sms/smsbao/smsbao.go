@@ -13,8 +13,8 @@ import (
 	"github.com/go-resty/resty/v2"
 	"github.com/samber/oops"
 
-	"bgin/internal/platform/errs"
-	"bgin/internal/platform/notification/channel/sms"
+	"bfiber/internal/platform/errs"
+	"bfiber/internal/platform/notification/channel/sms"
 )
 
 const (

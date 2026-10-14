@@ -1,12 +1,12 @@
 package auth
 
 import (
-	"github.com/gin-gonic/gin"
+	"github.com/gofiber/fiber/v3"
 
-	"bgin/internal/platform/authentication"
-	"bgin/internal/platform/errs"
-	"bgin/internal/platform/response"
-	"bgin/internal/platform/validator"
+	"bfiber/internal/platform/authentication"
+	"bfiber/internal/platform/errs"
+	"bfiber/internal/platform/response"
+	"bfiber/internal/platform/validator"
 )
 
 // Handler 是认证端点的 HTTP 适配层：只做绑定、取身份、调用服务、写响应。
@@ -31,19 +31,17 @@ func NewHandler(service *Service) *Handler {
 // @Success      201 {object} SessionResource "注册成功并已登录"
 // @x-order      1
 // @Router       /auth/sign-up/email [post]
-func (h *Handler) SignUpEmail(c *gin.Context) {
+func (h *Handler) SignUpEmail(c fiber.Ctx) error {
 	var body SignUpEmailBody
-	if err := c.ShouldBindJSON(&body); err != nil {
-		_ = c.Error(err)
-		return
+	if err := c.Bind().Body(&body); err != nil {
+		return err
 	}
 
-	session, err := h.service.SignUpEmail(c.Request.Context(), body)
+	session, err := h.service.SignUpEmail(c.Context(), body)
 	if err != nil {
-		_ = c.Error(err)
-		return
+		return err
 	}
-	response.Created(c, session)
+	return response.Created(c, session)
 }
 
 // SignInEmail 处理 POST /v1/auth/sign-in/email。
@@ -57,19 +55,17 @@ func (h *Handler) SignUpEmail(c *gin.Context) {
 // @Success      200 {object} SessionResource "登录成功"
 // @x-order      2
 // @Router       /auth/sign-in/email [post]
-func (h *Handler) SignInEmail(c *gin.Context) {
+func (h *Handler) SignInEmail(c fiber.Ctx) error {
 	var body SignInEmailBody
-	if err := c.ShouldBindJSON(&body); err != nil {
-		_ = c.Error(err)
-		return
+	if err := c.Bind().Body(&body); err != nil {
+		return err
 	}
 
-	session, err := h.service.SignInEmail(c.Request.Context(), body)
+	session, err := h.service.SignInEmail(c.Context(), body)
 	if err != nil {
-		_ = c.Error(err)
-		return
+		return err
 	}
-	response.OK(c, session)
+	return response.OK(c, session)
 }
 
 // SignInUsername 处理 POST /v1/auth/sign-in/username。
@@ -83,51 +79,26 @@ func (h *Handler) SignInEmail(c *gin.Context) {
 // @Success      200 {object} SessionResource "登录成功"
 // @x-order      3
 // @Router       /auth/sign-in/username [post]
-func (h *Handler) SignInUsername(c *gin.Context) {
+func (h *Handler) SignInUsername(c fiber.Ctx) error {
 	var body SignInUsernameBody
-	if err := c.ShouldBindJSON(&body); err != nil {
-		_ = c.Error(err)
-		return
+	if err := c.Bind().Body(&body); err != nil {
+		return err
 	}
 
-	session, err := h.service.SignInUsername(c.Request.Context(), body)
+	session, err := h.service.SignInUsername(c.Context(), body)
 	if err != nil {
-		_ = c.Error(err)
-		return
+		return err
 	}
-	response.OK(c, session)
+	return response.OK(c, session)
 }
 
-// SignOut 处理 POST /v1/auth/sign-out。请求体可省略。
-//
-// @Summary      登出
-// @Description  作废当前访问令牌。同时传入刷新令牌才会一并作废，否则续签通道仍然敞开。
-// @Description  传入的刷新令牌已失效或不属于当前用户时静默忽略，因为访问令牌已经作废。
-// @Tags         认证中心
-// @Accept       json
-// @Produce      json
-// @Security     BearerAuth
-// @Param        payload body SignOutBody false "可选的刷新令牌"
-// @Success      204 "已登出，无响应体"
-// @x-order      6
-// @Router       /auth/sign-out [post]
-func (h *Handler) SignOut(c *gin.Context) {
-	if !h.service.guard.Check(c.Request.Context()) {
-		_ = c.Error(errs.Unauthorized(errs.CodeAuthTokenInvalid, "Authentication is required"))
-		return
+// currentUserID 从请求上下文提取经过守卫认证的当前用户唯一标识。
+func (h *Handler) currentUserID(c fiber.Ctx) (string, error) {
+	id, ok := authentication.FromContext(c.Context())
+	if !ok {
+		return "", errs.Unauthorized(errs.CodeAuthTokenInvalid, "Authentication is required")
 	}
-
-	var body SignOutBody
-	if err := validator.BindOptionalJSON(c, &body); err != nil {
-		_ = c.Error(err)
-		return
-	}
-
-	if err := h.service.SignOut(c.Request.Context(), body); err != nil {
-		_ = c.Error(err)
-		return
-	}
-	response.NoContent(c)
+	return id.UserID, nil
 }
 
 // GetSession 处理 GET /v1/auth/get-session。
@@ -140,37 +111,17 @@ func (h *Handler) SignOut(c *gin.Context) {
 // @Success      200 {object} GetSessionResource "当前登录用户"
 // @x-order      4
 // @Router       /auth/get-session [get]
-func (h *Handler) currentUserID(c *gin.Context) (string, bool) {
-	id, ok := authentication.FromContext(c.Request.Context())
-	if !ok {
-		_ = c.Error(errs.Unauthorized(errs.CodeAuthTokenInvalid, "Authentication is required"))
-		return "", false
-	}
-	return id.UserID, true
-}
-
-// GetSession 处理 GET /v1/auth/get-session。
-//
-// @Summary      读取当前身份
-// @Description  纯只读、不续签：访问令牌过期即 401，客户端自行用 /auth/token/refresh 换新令牌（Q13）。
-// @Tags         认证中心
-// @Produce      json
-// @Security     BearerAuth
-// @Success      200 {object} GetSessionResource "当前登录用户"
-// @x-order      4
-// @Router       /auth/get-session [get]
-func (h *Handler) GetSession(c *gin.Context) {
-	userID, ok := h.currentUserID(c)
-	if !ok {
-		return
-	}
-
-	session, err := h.service.GetSession(c.Request.Context(), userID)
+func (h *Handler) GetSession(c fiber.Ctx) error {
+	userID, err := h.currentUserID(c)
 	if err != nil {
-		_ = c.Error(err)
-		return
+		return err
 	}
-	response.OK(c, session)
+
+	session, err := h.service.GetSession(c.Context(), userID)
+	if err != nil {
+		return err
+	}
+	return response.OK(c, session)
 }
 
 // Refresh 处理 POST /v1/auth/token/refresh。
@@ -186,19 +137,46 @@ func (h *Handler) GetSession(c *gin.Context) {
 // @Success      200 {object} SessionResource "新的一对令牌"
 // @x-order      5
 // @Router       /auth/token/refresh [post]
-func (h *Handler) Refresh(c *gin.Context) {
+func (h *Handler) Refresh(c fiber.Ctx) error {
 	var body RefreshTokenBody
-	if err := c.ShouldBindJSON(&body); err != nil {
-		_ = c.Error(err)
-		return
+	if err := c.Bind().Body(&body); err != nil {
+		return err
 	}
 
-	session, err := h.service.Refresh(c.Request.Context(), body)
+	session, err := h.service.Refresh(c.Context(), body)
 	if err != nil {
-		_ = c.Error(err)
-		return
+		return err
 	}
-	response.OK(c, session)
+	return response.OK(c, session)
+}
+
+// SignOut 处理 POST /v1/auth/sign-out。请求体可省略。
+//
+// @Summary      登出
+// @Description  作废当前访问令牌。同时传入刷新令牌才会一并作废，否则续签通道仍然敞开。
+// @Description  传入的刷新令牌已失效或不属于当前用户时静默忽略，因为访问令牌已经作废。
+// @Tags         认证中心
+// @Accept       json
+// @Produce      json
+// @Security     BearerAuth
+// @Param        payload body SignOutBody false "可选的刷新令牌"
+// @Success      204 "已登出，无响应体"
+// @x-order      6
+// @Router       /auth/sign-out [post]
+func (h *Handler) SignOut(c fiber.Ctx) error {
+	if !h.service.guard.Check(c.Context()) {
+		return errs.Unauthorized(errs.CodeAuthTokenInvalid, "Authentication is required")
+	}
+
+	var body SignOutBody
+	if err := validator.BindOptionalJSON(c, &body); err != nil {
+		return err
+	}
+
+	if err := h.service.SignOut(c.Context(), body); err != nil {
+		return err
+	}
+	return response.NoContent(c)
 }
 
 // ChangePassword 处理 POST /v1/auth/change-password。
@@ -213,23 +191,21 @@ func (h *Handler) Refresh(c *gin.Context) {
 // @Success      204 "修改成功，无响应体"
 // @x-order      9
 // @Router       /auth/change-password [post]
-func (h *Handler) ChangePassword(c *gin.Context) {
-	userID, ok := h.currentUserID(c)
-	if !ok {
-		return
+func (h *Handler) ChangePassword(c fiber.Ctx) error {
+	userID, err := h.currentUserID(c)
+	if err != nil {
+		return err
 	}
 
 	var body ChangePasswordBody
-	if err := c.ShouldBindJSON(&body); err != nil {
-		_ = c.Error(err)
-		return
+	if err := c.Bind().Body(&body); err != nil {
+		return err
 	}
 
-	if err := h.service.ChangePassword(c.Request.Context(), userID, body); err != nil {
-		_ = c.Error(err)
-		return
+	if err := h.service.ChangePassword(c.Context(), userID, body); err != nil {
+		return err
 	}
-	response.NoContent(c)
+	return response.NoContent(c)
 }
 
 // ForgetPassword 处理 POST /v1/auth/forget-password，投递重置链接。
@@ -245,19 +221,17 @@ func (h *Handler) ChangePassword(c *gin.Context) {
 // @Success      200 {object} StatusResource "已受理（邮箱不存在时也返回此结果）"
 // @x-order      10
 // @Router       /auth/forget-password [post]
-func (h *Handler) ForgetPassword(c *gin.Context) {
+func (h *Handler) ForgetPassword(c fiber.Ctx) error {
 	var body ForgetPasswordBody
-	if err := c.ShouldBindJSON(&body); err != nil {
-		_ = c.Error(err)
-		return
+	if err := c.Bind().Body(&body); err != nil {
+		return err
 	}
 
-	result, err := h.service.ForgetPassword(c.Request.Context(), c.GetHeader("Accept-Language"), body)
+	result, err := h.service.ForgetPassword(c.Context(), c.Get("Accept-Language"), body)
 	if err != nil {
-		_ = c.Error(err)
-		return
+		return err
 	}
-	response.OK(c, result)
+	return response.OK(c, result)
 }
 
 // RequestPasswordReset 处理 POST /v1/auth/request-password-reset，投递重置验证码。
@@ -272,19 +246,17 @@ func (h *Handler) ForgetPassword(c *gin.Context) {
 // @Success      200 {object} StatusResource "已受理（邮箱不存在时也返回此结果）"
 // @x-order      11
 // @Router       /auth/request-password-reset [post]
-func (h *Handler) RequestPasswordReset(c *gin.Context) {
+func (h *Handler) RequestPasswordReset(c fiber.Ctx) error {
 	var body RequestPasswordResetBody
-	if err := c.ShouldBindJSON(&body); err != nil {
-		_ = c.Error(err)
-		return
+	if err := c.Bind().Body(&body); err != nil {
+		return err
 	}
 
-	result, err := h.service.RequestPasswordReset(c.Request.Context(), c.GetHeader("Accept-Language"), body)
+	result, err := h.service.RequestPasswordReset(c.Context(), c.Get("Accept-Language"), body)
 	if err != nil {
-		_ = c.Error(err)
-		return
+		return err
 	}
-	response.OK(c, result)
+	return response.OK(c, result)
 }
 
 // ResetPassword 处理 POST /v1/auth/reset-password。
@@ -299,21 +271,19 @@ func (h *Handler) RequestPasswordReset(c *gin.Context) {
 // @Success      204 {string} string "口令已重置"
 // @x-order      12
 // @Router       /auth/reset-password [post]
-func (h *Handler) ResetPassword(c *gin.Context) {
+func (h *Handler) ResetPassword(c fiber.Ctx) error {
 	var body ResetPasswordBody
-	if err := c.ShouldBindJSON(&body); err != nil {
-		_ = c.Error(err)
-		return
+	if err := c.Bind().Body(&body); err != nil {
+		return err
 	}
 
-	if _, err := h.service.ResetPassword(c.Request.Context(), body); err != nil {
-		_ = c.Error(err)
-		return
+	if _, err := h.service.ResetPassword(c.Context(), body); err != nil {
+		return err
 	}
 
 	// api.md §5.1.4 规定重置口令返回 204：没有需要回传的业务数据，
 	// 空响应体也让"重置成功"不附带任何可被误用的信息。
-	response.NoContent(c)
+	return response.NoContent(c)
 }
 
 // SendVerificationOTP 处理 POST /v1/auth/send-verification-otp。
@@ -329,19 +299,17 @@ func (h *Handler) ResetPassword(c *gin.Context) {
 // @Success      200 {object} StatusResource "已受理（邮箱不存在或已验证时也返回此结果）"
 // @x-order      7
 // @Router       /auth/send-verification-otp [post]
-func (h *Handler) SendVerificationOTP(c *gin.Context) {
+func (h *Handler) SendVerificationOTP(c fiber.Ctx) error {
 	var body SendVerificationOTPBody
-	if err := c.ShouldBindJSON(&body); err != nil {
-		_ = c.Error(err)
-		return
+	if err := c.Bind().Body(&body); err != nil {
+		return err
 	}
 
-	result, err := h.service.SendVerificationOTP(c.Request.Context(), c.GetHeader("Accept-Language"), body)
+	result, err := h.service.SendVerificationOTP(c.Context(), c.Get("Accept-Language"), body)
 	if err != nil {
-		_ = c.Error(err)
-		return
+		return err
 	}
-	response.OK(c, result)
+	return response.OK(c, result)
 }
 
 // VerifyEmail 处理 POST /v1/auth/verify-email。
@@ -355,17 +323,15 @@ func (h *Handler) SendVerificationOTP(c *gin.Context) {
 // @Success      200 {object} StatusResource "验证通过"
 // @x-order      8
 // @Router       /auth/verify-email [post]
-func (h *Handler) VerifyEmail(c *gin.Context) {
+func (h *Handler) VerifyEmail(c fiber.Ctx) error {
 	var body VerifyEmailBody
-	if err := c.ShouldBindJSON(&body); err != nil {
-		_ = c.Error(err)
-		return
+	if err := c.Bind().Body(&body); err != nil {
+		return err
 	}
 
-	result, err := h.service.VerifyEmail(c.Request.Context(), body)
+	result, err := h.service.VerifyEmail(c.Context(), body)
 	if err != nil {
-		_ = c.Error(err)
-		return
+		return err
 	}
-	response.OK(c, result)
+	return response.OK(c, result)
 }

@@ -6,9 +6,9 @@ import (
 	"slices"
 	"time"
 
-	"bgin/internal/database/models"
-	"bgin/internal/platform/excel"
-	"bgin/internal/shared/user"
+	"bfiber/internal/database/models"
+	"bfiber/internal/platform/excel"
+	"bfiber/internal/shared/user"
 )
 
 // UserFetcher 声明按条件分页物理拉取用户实体的抽象契约（ISP），由 models 或函数适配器满足。

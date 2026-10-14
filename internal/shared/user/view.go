@@ -3,8 +3,8 @@ package user
 import (
 	"time"
 
-	"bgin/internal/database/models"
-	"bgin/internal/shared/enums"
+	"bfiber/internal/database/models"
+	"bfiber/internal/shared/enums"
 )
 
 // Profile 是用户档案响应视图，面向客户端自助与后台管理共用。

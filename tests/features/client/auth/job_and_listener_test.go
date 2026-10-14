@@ -10,12 +10,12 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.uber.org/zap"
 
-	"bgin/internal/config"
-	"bgin/internal/features/client/auth"
-	"bgin/internal/platform/eventbus"
-	"bgin/internal/platform/mailer"
-	"bgin/internal/platform/queue"
-	"bgin/internal/shared/events"
+	"bfiber/internal/config"
+	"bfiber/internal/features/client/auth"
+	"bfiber/internal/platform/eventbus"
+	"bfiber/internal/platform/mailer"
+	"bfiber/internal/platform/queue"
+	"bfiber/internal/shared/events"
 )
 
 type mockMailer struct {
@@ -72,7 +72,7 @@ func TestWelcomeEmailJobExecution(t *testing.T) {
 	require.Len(t, mailMock.sent, 1)
 	assert.Equal(t, "alex@example.com", mailMock.sent[0].To)
 	assert.Contains(t, mailMock.sent[0].Body, "Alex")
-	assert.Contains(t, mailMock.sent[0].Body, "Welcome to bgin")
+	assert.Contains(t, mailMock.sent[0].Body, "Welcome to bfiber")
 }
 
 func TestAuthEventListener(t *testing.T) {

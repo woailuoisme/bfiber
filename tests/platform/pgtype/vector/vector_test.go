@@ -12,7 +12,7 @@ import (
 	"github.com/uptrace/bun"
 	"github.com/uptrace/bun/dialect/pgdialect"
 
-	"bgin/internal/platform/pgtype/vector"
+	"bfiber/internal/platform/pgtype/vector"
 )
 
 // TestVector_Basic 验证向量的基本构造、维度、切片导出与字符串解析。

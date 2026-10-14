@@ -7,9 +7,9 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"bgin/internal/config"
-	"bgin/internal/console"
-	"bgin/internal/console/core"
+	"bfiber/internal/config"
+	"bfiber/internal/console"
+	"bfiber/internal/console/core"
 )
 
 // TestSentryTestOptions_Disabled 验证当 Sentry/GlitchTip 未配置时输出警告提示并安全退出。
@@ -44,7 +44,7 @@ func TestSentryTestOptions_CompleteAndValidate(t *testing.T) {
 		opts := console.NewSentryTestOptions(f)
 		opts.Message = ""
 		require.NoError(t, opts.Complete(nil, nil))
-		assert.Equal(t, "Test GlitchTip connection from bgin CLI", opts.Message)
+		assert.Equal(t, "Test GlitchTip connection from bfiber CLI", opts.Message)
 		require.NoError(t, opts.Validate())
 	})
 
@@ -64,7 +64,7 @@ func TestSentryTestOptions_Enabled(t *testing.T) {
 		StreamsValue: streams,
 		ConfigValue: &config.Config{
 			App: config.AppConfig{
-				Name: "bgin-test",
+				Name: "bfiber-test",
 				Env:  "testing",
 			},
 			Sentry: config.SentryConfig{

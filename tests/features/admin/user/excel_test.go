@@ -11,10 +11,10 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/xuri/excelize/v2"
 
-	"bgin/internal/database"
-	"bgin/internal/database/models"
-	admin "bgin/internal/features/admin/user"
-	"bgin/internal/shared/user"
+	"bfiber/internal/database"
+	"bfiber/internal/database/models"
+	admin "bfiber/internal/features/admin/user"
+	"bfiber/internal/shared/user"
 )
 
 func TestUsersExportContract(t *testing.T) {

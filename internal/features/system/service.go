@@ -3,7 +3,7 @@ package system
 import (
 	"context"
 
-	"bgin/internal/platform/ready"
+	"bfiber/internal/platform/ready"
 )
 
 // 组件名定义，对齐 ready 标准组件常量，对应就绪响应 checks 键名与链路日志。

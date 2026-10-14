@@ -5,26 +5,26 @@ import (
 	"context"
 	"time"
 
-	"github.com/gin-gonic/gin"
+	"github.com/gofiber/fiber/v3"
 	"github.com/uptrace/bun"
 	"go.temporal.io/sdk/client"
 	"go.uber.org/zap"
 
-	"bgin/internal/config"
-	"bgin/internal/platform/cache"
-	"bgin/internal/platform/eventbus"
-	"bgin/internal/platform/mailer"
-	"bgin/internal/platform/notification"
-	"bgin/internal/platform/payment"
-	"bgin/internal/platform/pdf"
-	"bgin/internal/platform/queue"
-	"bgin/internal/platform/realtime"
-	"bgin/internal/platform/search"
-	platformsentry "bgin/internal/platform/sentry"
-	"bgin/internal/platform/storage"
-	"bgin/internal/platform/telemetry"
-	"bgin/internal/platform/wechat"
-	"bgin/internal/shared/media"
+	"bfiber/internal/config"
+	"bfiber/internal/platform/cache"
+	"bfiber/internal/platform/eventbus"
+	"bfiber/internal/platform/mailer"
+	"bfiber/internal/platform/notification"
+	"bfiber/internal/platform/payment"
+	"bfiber/internal/platform/pdf"
+	"bfiber/internal/platform/queue"
+	"bfiber/internal/platform/realtime"
+	"bfiber/internal/platform/search"
+	platformsentry "bfiber/internal/platform/sentry"
+	"bfiber/internal/platform/storage"
+	"bfiber/internal/platform/telemetry"
+	"bfiber/internal/platform/wechat"
+	"bfiber/internal/shared/media"
 )
 
 // Application 聚合装配完成的系统依赖与 HTTP 引擎。
@@ -46,11 +46,14 @@ type Application struct {
 	eventbus     *eventbus.Manager
 	queue        *queue.Client
 	temporal     client.Client
-	engine       *gin.Engine
+	engine       *fiber.App
 }
 
 // Engine 暴露已装配的路由引擎，供集成测试直接驱动请求。
-func (a *Application) Engine() *gin.Engine { return a.engine }
+func (a *Application) Engine() *fiber.App { return a.engine }
+
+// App 暴露已装配的 Fiber 实例。
+func (a *Application) App() *fiber.App { return a.engine }
 
 // DB 暴露数据库连接句柄。
 func (a *Application) DB() *bun.DB { return a.db }

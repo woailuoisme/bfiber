@@ -9,9 +9,9 @@ import (
 
 	"go.uber.org/zap"
 
-	"bgin/internal/platform/errs"
-	"bgin/internal/platform/logger"
-	platformsentry "bgin/internal/platform/sentry"
+	"bfiber/internal/platform/errs"
+	"bfiber/internal/platform/logger"
+	platformsentry "bfiber/internal/platform/sentry"
 )
 
 // Handler 描述任务执行的原子处理函数契约 (SRP)。

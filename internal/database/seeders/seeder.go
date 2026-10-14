@@ -12,7 +12,7 @@ import (
 	"github.com/uptrace/bun"
 	"go.uber.org/zap"
 
-	"bgin/internal/platform/logger"
+	"bfiber/internal/platform/logger"
 )
 
 // Seeder 是数据播种器必须实现的统一接口。

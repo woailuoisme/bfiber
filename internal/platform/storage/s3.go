@@ -18,9 +18,8 @@ import (
 	"github.com/minio/minio-go/v7/pkg/credentials"
 	"github.com/samber/lo"
 
-	"bgin/internal/config"
-	"bgin/internal/platform/errs"
-	"bgin/internal/platform/resilience"
+	"bfiber/internal/config"
+	"bfiber/internal/platform/errs"
 )
 
 // defaultS3Region 是 minio 的签名要求与 S3 兼容实现的默认值不一致时的兜底：
@@ -66,7 +65,7 @@ func NewS3Disk(cfg config.S3StorageConfig) (Disk, error) {
 		Creds:     credentials.NewStaticV4(cfg.AccessKeyID, cfg.SecretAccessKey, ""),
 		Secure:    cfg.UseSSL,
 		Region:    region,
-		Transport: resilience.NewResilientTransport(nil, resilience.ResilientTransportConfig{}),
+		Transport: http.DefaultTransport,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("storage: failed to initialize S3 client (endpoint=%s): %w", cfg.Endpoint, err)

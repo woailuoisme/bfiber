@@ -8,9 +8,9 @@ import (
 	"github.com/brianvoe/gofakeit/v7"
 	"github.com/uptrace/bun"
 
-	"bgin/internal/database"
-	"bgin/internal/database/models"
-	"bgin/internal/platform/hasher"
+	"bfiber/internal/database"
+	"bfiber/internal/database/models"
+	"bfiber/internal/platform/hasher"
 )
 
 // AccountFactory 是面向 models.Account 凭据实体的领域工厂。

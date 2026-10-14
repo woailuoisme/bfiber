@@ -7,8 +7,8 @@ import (
 
 	"github.com/uptrace/bun"
 
-	"bgin/internal/database"
-	"bgin/internal/shared/enums"
+	"bfiber/internal/database"
+	"bfiber/internal/shared/enums"
 )
 
 // ProviderCredential 是本地密码账号的 provider_id。

@@ -4,7 +4,7 @@ import (
 	"go.temporal.io/sdk/client"
 	"go.temporal.io/sdk/worker"
 
-	"bgin/internal/config"
+	"bfiber/internal/config"
 )
 
 // NewWorker 构造并配置指定任务队列的 Temporal Worker 实例。

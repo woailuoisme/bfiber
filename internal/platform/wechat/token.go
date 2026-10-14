@@ -10,8 +10,8 @@ import (
 
 	"github.com/google/uuid"
 
-	"bgin/internal/platform/cache"
-	"bgin/internal/platform/errs"
+	"bfiber/internal/platform/cache"
+	"bfiber/internal/platform/errs"
 )
 
 const (

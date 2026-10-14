@@ -16,8 +16,8 @@ import (
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 
-	"bgin/internal/config"
-	"bgin/internal/platform/logger"
+	"bfiber/internal/config"
+	"bfiber/internal/platform/logger"
 )
 
 var (

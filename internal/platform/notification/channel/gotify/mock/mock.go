@@ -5,7 +5,7 @@ import (
 	"context"
 	"sync"
 
-	"bgin/internal/platform/notification/channel/gotify"
+	"bfiber/internal/platform/notification/channel/gotify"
 )
 
 // Driver 内存记录型 Gotify 驱动。

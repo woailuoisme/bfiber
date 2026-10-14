@@ -7,7 +7,7 @@ import (
 	"sync"
 	"time"
 
-	"bgin/internal/platform/errs"
+	"bfiber/internal/platform/errs"
 )
 
 // Identity 描述已认证请求的上下文身份凭据与会话元数据。

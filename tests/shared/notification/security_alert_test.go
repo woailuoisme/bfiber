@@ -6,9 +6,9 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"bgin/internal/platform/mailer"
-	"bgin/internal/platform/notification/contract"
-	sharedNotif "bgin/internal/shared/notification"
+	"bfiber/internal/platform/mailer"
+	"bfiber/internal/platform/notification/contract"
+	sharedNotif "bfiber/internal/shared/notification"
 )
 
 func TestSecurityAlertNotification(t *testing.T) {

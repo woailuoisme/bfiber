@@ -9,8 +9,8 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"bgin/internal/database"
-	"bgin/internal/database/models"
+	"bfiber/internal/database"
+	"bfiber/internal/database/models"
 )
 
 // TestActiveRecord_Execution_ChunkAndCursor 测试基于分页与原生 Rows 游标的流式遍历。

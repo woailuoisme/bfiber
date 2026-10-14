@@ -15,7 +15,7 @@ import (
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 	"go.opentelemetry.io/otel/sdk/trace/tracetest"
 
-	"bgin/internal/database"
+	"bfiber/internal/database"
 )
 
 func TestOTelQueryHook_NoActiveSpan(t *testing.T) {

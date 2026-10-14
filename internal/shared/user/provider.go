@@ -8,9 +8,9 @@ import (
 
 	"github.com/uptrace/bun"
 
-	"bgin/internal/database/models"
-	"bgin/internal/platform/authentication"
-	"bgin/internal/platform/hasher"
+	"bfiber/internal/database/models"
+	"bfiber/internal/platform/authentication"
+	"bfiber/internal/platform/hasher"
 )
 
 var (

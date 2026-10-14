@@ -9,10 +9,10 @@ import (
 	"github.com/samber/oops"
 	"go.uber.org/zap"
 
-	"bgin/internal/platform/cache"
-	"bgin/internal/platform/errs"
-	"bgin/internal/platform/logger"
-	"bgin/internal/platform/notification/contract"
+	"bfiber/internal/platform/cache"
+	"bfiber/internal/platform/errs"
+	"bfiber/internal/platform/logger"
+	"bfiber/internal/platform/notification/contract"
 )
 
 // SendFunc 定义通知投递管道处理函数契约。

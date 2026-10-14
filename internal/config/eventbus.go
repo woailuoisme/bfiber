@@ -18,7 +18,7 @@ func (c *Config) validateEventBus() error {
 		c.EventBus.Driver = "go_channel"
 	}
 	if strings.TrimSpace(c.EventBus.TopicPrefix) == "" {
-		c.EventBus.TopicPrefix = "bgin"
+		c.EventBus.TopicPrefix = "bfiber"
 	}
 	if strings.TrimSpace(c.EventBus.LogLevel) == "" {
 		c.EventBus.LogLevel = "warn"

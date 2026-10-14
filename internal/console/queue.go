@@ -13,14 +13,14 @@ import (
 	"github.com/hibiken/asynq"
 	"github.com/spf13/cobra"
 
-	"bgin/internal/bootstrap"
-	"bgin/internal/console/core"
-	"bgin/internal/features/client/auth"
-	"bgin/internal/features/system"
-	"bgin/internal/platform/cache"
-	"bgin/internal/platform/mailer"
-	"bgin/internal/platform/queue"
-	"bgin/internal/platform/storage"
+	"bfiber/internal/bootstrap"
+	"bfiber/internal/console/core"
+	"bfiber/internal/features/client/auth"
+	"bfiber/internal/features/system"
+	"bfiber/internal/platform/cache"
+	"bfiber/internal/platform/mailer"
+	"bfiber/internal/platform/queue"
+	"bfiber/internal/platform/storage"
 )
 
 // QueueWorkOptions 封装 queue:work 命令的参数与依赖容器 (SRP & DIP)。

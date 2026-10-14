@@ -11,7 +11,7 @@ import (
 	"strings"
 	"text/template"
 
-	"bgin/internal/console/stubs"
+	"bfiber/internal/console/stubs"
 )
 
 // GeneratorOptions 封装了代码生成器的入参配置。

@@ -102,33 +102,31 @@ Authorization: Bearer <your_access_token>
 | **`Accept`**          |  ✅  | 客户端期望的响应格式                                     | `application/json`                     |
 | **`Authorization`**   | 条件 | 访问受保护资源的 Bearer Token                            | `Bearer eyJhbGci...`                   |
 | **`x-request-id`**    |  ❌  | 全链路追踪 ID；未提供时由服务端生成，并在响应头回写      | `req_019572d4a6c878b18cf0`             |
-| **`Idempotency-Key`** | 可选 | 非幂等写操作的去重键；携带则去重并回放首次响应，未携带行为不变 | `019572d4-a6c8-78b1-8cf0-281b94c032a1` |
-| **`If-None-Match`**   | 未实现 | 条件读取：资源未变化时返回`304 Not Modified`，节省带宽 | `W/"019572d4a6c878b1"`                 |
+| **`Idempotency-Key`** / **`X-Idempotency-Key`** | 可选 | 非幂等写操作的去重键（标准 36 字符 UUIDv4/v7）；携带则去重并回放首次响应（响应头带 `Idempotent-Replayed: true`），未携带行为不变 | `019572d4-a6c8-78b1-8cf0-281b94c032a1` |
+| **`If-None-Match`**   | 可选 | 条件读取：资源未变化时返回 `304 Not Modified`，节省带宽 | `W/"019572d4a6c878b1"`                 |
 
-> 上表标为「未实现」的请求头当前**会被服务端忽略**，不产生任何效果，详见 3.4。
->
 > 本 API 只使用 `application/json`：不实现 415/406 内容协商——`Accept` 与 `Content-Type` 不匹配不会单独报错，请求体结构有问题时仍返回 400。
+> 服务端已启用透明 `compress` 中间件，客户端携带 `Accept-Encoding: gzip, br` 时自动执行动态压缩。
 
 ### 3.3 幂等请求 (Idempotency)
 
-> **已接线（探测模式）。** 服务端已挂载幂等中间件：携带 `Idempotency-Key` 的写请求会按该键去重、并在重复提交时回放首次响应；**未携带时行为与从前完全一致**（不强制要求，避免破坏既有客户端与渠道回调）。以下语义适用于携带该头的请求。
+> **已接线（Fiber v3 官方工业级实现）。** 服务端已挂载官方幂等中间件：非安全方法（POST/PATCH/DELETE 等）携带 `X-Idempotency-Key` 或 `Idempotency-Key` 会按该键去重、锁定并发、并在重复提交时回放首次响应；**未携带时行为与从前完全一致**（不强制要求，避免破坏既有客户端与渠道回调）。安全方法（GET/HEAD）自动跳过幂等检查。
 
-对创建类、支付类等非幂等写操作，建议携带 `Idempotency-Key`：
+对创建类、支付类等非幂等写操作，建议携带 `X-Idempotency-Key`：
 
-- **Key 取值**：推荐使用 UUIDv7 或 ULID 等全局唯一、单调递增的字符串。
+- **Key 取值**：强制采用 36 字符的标准 UUID（推荐 UUIDv7 或 UUIDv4）。格式不符时返回 `400 Bad Request`。
 - **重试保持稳定**：同一业务意图的多次重试必须复用同一个 Key；每次重试生成新 Key 将失去去重保护。
 - **服务端行为**：
-  - 相同 Key、相同请求载荷：返回首次请求的结果，不会重复执行；
-  - 相同 Key、不同请求载荷：拒绝执行并返回 `422 Unprocessable Entity`；
-  - 相同 Key 的首次请求仍在处理中：返回 `409 Conflict`，请退避后重试；
-  - Key 在约定的保留期内有效，覆盖常规重试与异步补偿周期。
+  - 首次请求执行成功后，响应数据与状态码将被安全缓存并保留 30 分钟；
+  - 相同 Key 重复请求时：直接回放首次成功响应，响应头附带 **`Idempotent-Replayed: true`**；
+  - 并发冲突与锁机制：处理过程中同一 Key 请求由存储锁互斥控制。
 
 ### 3.4 条件读取与缓存协商 (Conditional Reads)
 
-> **当前版本不支持。** 本版本不返回 `ETag`，也不处理 `If-None-Match`，`304 Not Modified` 不会被返回；所有 `GET` 均返回完整响应体。以下为规划中的语义。
+> **已接线（Fiber v3 官方 ETag）。** 服务端已挂载官方弱 ETag 协商中间件，所有 GET 响应自动注入 ETag 标头。
 
-- `GET /{version}/{resources}/{id}` 的响应头携带实体标签：`ETag: W/"<hash>"`。
-- 后续请求可携带 `If-None-Match: W/"<hash>"`；资源未变化时服务端返回 **`304 Not Modified`**（无响应体），调用方可直接复用本地缓存以节省带宽。
+- `GET` 请求的响应头携带弱实体标签：`ETag: W/"<hash>"`。
+- 后续读取可携带 `If-None-Match: W/"<hash>"`；资源未变化时服务端返回 **`304 Not Modified`**（无响应体），调用方可直接复用本地缓存以节省网络带宽。
 
 > **关于并发更新**
 >

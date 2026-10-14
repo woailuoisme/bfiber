@@ -1,9 +1,9 @@
 package {{ .PackageName }}
 
 import (
-	"github.com/gin-gonic/gin"
+	"github.com/gofiber/fiber/v3"
 
-	"bgin/internal/platform/response"
+	"bfiber/internal/platform/response"
 )
 
 // Handler 负责处理 {{ .ChineseName }} 相关的 HTTP 交互。
@@ -26,21 +26,19 @@ func NewHandler(service Service) *Handler {
 // @Success      200 {object} {{ .PascalName }}PageResource "查询成功并返回分页列表"
 // @x-order      1
 // @Router       {{ .RoutePath }} [get]
-func (h *Handler) List(c *gin.Context) {
+func (h *Handler) List(c fiber.Ctx) error {
 	var query List{{ .PascalName }}QueryParams
-	if err := c.ShouldBindQuery(&query); err != nil {
-		_ = c.Error(err)
-		return
+	if err := c.Bind().Query(&query); err != nil {
+		return err
 	}
 	query.Normalize()
 
-	items, meta, err := h.service.List(c.Request.Context(), query)
+	items, meta, err := h.service.List(c.Context(), query)
 	if err != nil {
-		_ = c.Error(err)
-		return
+		return err
 	}
 
-	response.Paginated(c, items, meta)
+	return response.Paginated(c, items, meta)
 }
 
 // Create 创建{{ .ChineseName }}
@@ -53,21 +51,19 @@ func (h *Handler) List(c *gin.Context) {
 // @Success      201 {object} {{ .PascalName }}Resource "创建成功"
 // @x-order      2
 // @Router       {{ .RoutePath }} [post]
-func (h *Handler) Create(c *gin.Context) {
+func (h *Handler) Create(c fiber.Ctx) error {
 	var body Create{{ .PascalName }}Body
-	if err := c.ShouldBindJSON(&body); err != nil {
-		_ = c.Error(err)
-		return
+	if err := c.Bind().Body(&body); err != nil {
+		return err
 	}
 	body.Normalize()
 
-	res, err := h.service.Create(c.Request.Context(), body)
+	res, err := h.service.Create(c.Context(), body)
 	if err != nil {
-		_ = c.Error(err)
-		return
+		return err
 	}
 
-	response.Created(c, res)
+	return response.Created(c, res)
 }
 
 // GetByID 获取{{ .ChineseName }}详情
@@ -80,20 +76,18 @@ func (h *Handler) Create(c *gin.Context) {
 // @Success      200 {object} {{ .PascalName }}Resource "获取成功"
 // @x-order      3
 // @Router       {{ .RoutePath }}/{id} [get]
-func (h *Handler) GetByID(c *gin.Context) {
+func (h *Handler) GetByID(c fiber.Ctx) error {
 	var pathParams {{ .PascalName }}PathParams
-	if err := c.ShouldBindUri(&pathParams); err != nil {
-		_ = c.Error(err)
-		return
+	if err := c.Bind().URI(&pathParams); err != nil {
+		return err
 	}
 
-	res, err := h.service.GetByID(c.Request.Context(), pathParams.ID)
+	res, err := h.service.GetByID(c.Context(), pathParams.ID)
 	if err != nil {
-		_ = c.Error(err)
-		return
+		return err
 	}
 
-	response.OK(c, res)
+	return response.OK(c, res)
 }
 
 // Update 更新{{ .ChineseName }}
@@ -107,27 +101,24 @@ func (h *Handler) GetByID(c *gin.Context) {
 // @Success      200 {object} {{ .PascalName }}Resource "更新成功"
 // @x-order      4
 // @Router       {{ .RoutePath }}/{id} [patch]
-func (h *Handler) Update(c *gin.Context) {
+func (h *Handler) Update(c fiber.Ctx) error {
 	var pathParams {{ .PascalName }}PathParams
-	if err := c.ShouldBindUri(&pathParams); err != nil {
-		_ = c.Error(err)
-		return
+	if err := c.Bind().URI(&pathParams); err != nil {
+		return err
 	}
 
 	var body Update{{ .PascalName }}Body
-	if err := c.ShouldBindJSON(&body); err != nil {
-		_ = c.Error(err)
-		return
+	if err := c.Bind().Body(&body); err != nil {
+		return err
 	}
 	body.Normalize()
 
-	res, err := h.service.Update(c.Request.Context(), pathParams.ID, body)
+	res, err := h.service.Update(c.Context(), pathParams.ID, body)
 	if err != nil {
-		_ = c.Error(err)
-		return
+		return err
 	}
 
-	response.OK(c, res)
+	return response.OK(c, res)
 }
 
 // Delete 删除{{ .ChineseName }}
@@ -140,17 +131,15 @@ func (h *Handler) Update(c *gin.Context) {
 // @Success      204 "删除成功无内容返回"
 // @x-order      5
 // @Router       {{ .RoutePath }}/{id} [delete]
-func (h *Handler) Delete(c *gin.Context) {
+func (h *Handler) Delete(c fiber.Ctx) error {
 	var pathParams {{ .PascalName }}PathParams
-	if err := c.ShouldBindUri(&pathParams); err != nil {
-		_ = c.Error(err)
-		return
+	if err := c.Bind().URI(&pathParams); err != nil {
+		return err
 	}
 
-	if err := h.service.Delete(c.Request.Context(), pathParams.ID); err != nil {
-		_ = c.Error(err)
-		return
+	if err := h.service.Delete(c.Context(), pathParams.ID); err != nil {
+		return err
 	}
 
-	response.NoContent(c)
+	return response.NoContent(c)
 }

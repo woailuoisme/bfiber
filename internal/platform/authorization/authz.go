@@ -17,8 +17,8 @@ import (
 	"github.com/casbin/casbin/v3/model"
 	stringadapter "github.com/casbin/casbin/v3/persist/string-adapter"
 
-	"bgin/internal/platform/authentication"
-	"bgin/internal/platform/errs"
+	"bfiber/internal/platform/authentication"
+	"bfiber/internal/platform/errs"
 )
 
 // 常用资源与动作常量。

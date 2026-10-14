@@ -13,8 +13,8 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/uptrace/bun"
 
-	"bgin/internal/database"
-	"bgin/internal/database/models"
+	"bfiber/internal/database"
+	"bfiber/internal/database/models"
 )
 
 // TestActiveRecord_Execution_ErrorBranchesAndEdgeCases 深度覆盖各类生命周期钩子失败、DB 执行报错与边界空值路径。

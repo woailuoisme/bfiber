@@ -16,8 +16,8 @@ import (
 	"go.temporal.io/sdk/workflow"
 	"go.uber.org/zap"
 
-	"bgin/internal/platform/logger"
-	"bgin/internal/platform/storage"
+	"bfiber/internal/platform/logger"
+	"bfiber/internal/platform/storage"
 )
 
 // WorkflowNameSystemMaintenance 声明系统例行维护工作流的唯一标识。

@@ -1,11 +1,9 @@
 package bootstrap
 
 import (
-	"net/http"
+	"github.com/gofiber/fiber/v3"
 
-	"github.com/gin-gonic/gin"
-
-	"bgin/internal/shared/apidocs"
+	"bfiber/internal/shared/apidocs"
 )
 
 // 文档页面与 OpenAPI 规范路由路径常量。
@@ -22,8 +20,8 @@ const (
 )
 
 var (
-	clientReferencePage = []byte(buildReferencePage("bgin API", referenceSpecPath))
-	adminReferencePage  = []byte(buildReferencePage("bgin Admin API", adminReferenceSpecPath))
+	clientReferencePage = []byte(buildReferencePage("bfiber API", referenceSpecPath))
+	adminReferencePage  = []byte(buildReferencePage("bfiber Admin API", adminReferenceSpecPath))
 )
 
 // buildReferencePage 构建 Scalar API Reference 的宿主 HTML 页。
@@ -148,30 +146,34 @@ func buildReferencePage(title, specPath string) string {
 }
 
 // registerDocs 挂载 API 文档，仅在 ENABLE_DOCS 开启时调用。
-func registerDocs(engine *gin.Engine) {
-	engine.GET(docsPagePath, serveClientReference)
-	engine.GET(referenceSpecPath, serveClientReferenceSpec)
+func registerDocs(app *fiber.App) {
+	app.Get(docsPagePath, serveClientReference)
+	app.Get(referenceSpecPath, serveClientReferenceSpec)
 
-	engine.GET(adminDocsPagePath, serveAdminReference)
-	engine.GET(adminReferenceSpecPath, serveAdminReferenceSpec)
+	app.Get(adminDocsPagePath, serveAdminReference)
+	app.Get(adminReferenceSpecPath, serveAdminReferenceSpec)
 }
 
 // serveClientReference 返回客户端 Scalar 的宿主页。
-func serveClientReference(c *gin.Context) {
-	c.Data(http.StatusOK, "text/html; charset=utf-8", clientReferencePage)
+func serveClientReference(c fiber.Ctx) error {
+	c.Set("Content-Type", "text/html; charset=utf-8")
+	return c.Status(fiber.StatusOK).Send(clientReferencePage)
 }
 
 // serveClientReferenceSpec 原样返回编进二进制的客户端规范。
-func serveClientReferenceSpec(c *gin.Context) {
-	c.Data(http.StatusOK, "application/json; charset=utf-8", apidocs.Spec)
+func serveClientReferenceSpec(c fiber.Ctx) error {
+	c.Set("Content-Type", "application/json; charset=utf-8")
+	return c.Status(fiber.StatusOK).Send(apidocs.Spec)
 }
 
 // serveAdminReference 返回管理端 Scalar 的宿主页。
-func serveAdminReference(c *gin.Context) {
-	c.Data(http.StatusOK, "text/html; charset=utf-8", adminReferencePage)
+func serveAdminReference(c fiber.Ctx) error {
+	c.Set("Content-Type", "text/html; charset=utf-8")
+	return c.Status(fiber.StatusOK).Send(adminReferencePage)
 }
 
 // serveAdminReferenceSpec 原样返回编进二进制的管理端规范。
-func serveAdminReferenceSpec(c *gin.Context) {
-	c.Data(http.StatusOK, "application/json; charset=utf-8", apidocs.AdminSpec)
+func serveAdminReferenceSpec(c fiber.Ctx) error {
+	c.Set("Content-Type", "application/json; charset=utf-8")
+	return c.Status(fiber.StatusOK).Send(apidocs.AdminSpec)
 }

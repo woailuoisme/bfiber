@@ -13,7 +13,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/uptrace/bun"
 
-	"bgin/internal/database/models"
+	"bfiber/internal/database/models"
 )
 
 // testHash 是占位口令哈希，模型层不校验 argon2id 本身。
@@ -71,7 +71,7 @@ func TestRepositoryUserLifecycle(t *testing.T) {
 	})
 
 	t.Run("不存在的用户返回 ErrNoRows", func(t *testing.T) {
-		_, err := models.FindUserByEmail(ctx, db, "nobody@bgin.local")
+		_, err := models.FindUserByEmail(ctx, db, "nobody@bfiber.local")
 		assert.ErrorIs(t, err, sql.ErrNoRows)
 	})
 

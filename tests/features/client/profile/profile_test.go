@@ -4,19 +4,21 @@ package profile_test
 import (
 	"bytes"
 	"encoding/json"
+	"io"
 	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
 	"testing"
 
-	"github.com/gin-gonic/gin"
+	"github.com/gofiber/fiber/v3"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"bgin/internal/features/client/profile"
-	"bgin/internal/platform/authentication"
-	"bgin/internal/platform/errs"
-	"bgin/internal/shared/enums"
+	"bfiber/internal/features/client/profile"
+	"bfiber/internal/middleware/global"
+	"bfiber/internal/platform/authentication"
+	"bfiber/internal/platform/validator"
+	"bfiber/internal/shared/enums"
 )
 
 // TestUpdateProfileRequestShape 校验自助更新只暴露 Q27 允许的字段。
@@ -28,7 +30,7 @@ func TestUpdateProfileRequestShape(t *testing.T) {
 		"username":"alice_01",
 		"displayUsername":"Alice",
 		"phoneNumber":"+8613800138000",
-		"email":"should-be-ignored@bgin.local",
+		"email":"should-be-ignored@bfiber.local",
 		"role":"admin"
 	}`), &request))
 
@@ -47,87 +49,88 @@ func TestUpdateProfileRequestShape(t *testing.T) {
 
 // TestUploadAvatarValidation 校验上传头像的权限要求、字段提取与魔数格式防御。
 func TestUploadAvatarValidation(t *testing.T) {
-	gin.SetMode(gin.TestMode)
-
 	handler := profile.NewHandler(nil, nil)
 
-	newTestEngine := func(withAuth bool) *gin.Engine {
-		engine := gin.New()
-		engine.Use(func(c *gin.Context) {
+	newTestApp := func(withAuth bool) *fiber.App {
+		app := fiber.New(fiber.Config{
+			StructValidator: validator.NewFiberValidator(),
+			ErrorHandler:    global.New(global.Deps{}).ErrorHandler(),
+		})
+		app.Use(func(c fiber.Ctx) error {
 			if withAuth {
-				c.Request = c.Request.WithContext(authentication.With(c.Request.Context(), authentication.Identity{
+				c.SetContext(authentication.With(c.Context(), authentication.Identity{
 					UserID: "user_test_avatar_1",
 					Role:   string(enums.RoleUser),
 				}))
 			}
-			c.Next()
-			if len(c.Errors) > 0 {
-				errs.Render(c, c.Errors.Last().Err)
-			}
+			return c.Next()
 		})
-		engine.POST("/v1/users/me/avatar", handler.UploadAvatar)
-		return engine
+		app.Post("/v1/users/me/avatar", handler.UploadAvatar)
+		return app
+	}
+
+	execReq := func(app *fiber.App, req *http.Request) (int, string) {
+		resp, err := app.Test(req, fiber.TestConfig{Timeout: 0})
+		require.NoError(t, err)
+		defer func() { _ = resp.Body.Close() }()
+		bodyBytes, err := io.ReadAll(resp.Body)
+		require.NoError(t, err)
+		return resp.StatusCode, string(bodyBytes)
 	}
 
 	t.Run("未登录拒绝 401", func(t *testing.T) {
-		engine := newTestEngine(false)
+		app := newTestApp(false)
 		req := createMultipartRequest(t, "avatar", "avatar.png", []byte("dummy"))
-		rec := httptest.NewRecorder()
-		engine.ServeHTTP(rec, req)
+		code, _ := execReq(app, req)
 
-		assert.Equal(t, http.StatusUnauthorized, rec.Code)
+		assert.Equal(t, http.StatusUnauthorized, code)
 	})
 
 	t.Run("缺失文件返回 422", func(t *testing.T) {
-		engine := newTestEngine(true)
+		app := newTestApp(true)
 		req := createMultipartRequest(t, "", "", nil)
-		rec := httptest.NewRecorder()
-		engine.ServeHTTP(rec, req)
+		code, body := execReq(app, req)
 
-		assert.Equal(t, http.StatusUnprocessableEntity, rec.Code)
-		assert.Contains(t, rec.Body.String(), "avatar")
+		assert.Equal(t, http.StatusUnprocessableEntity, code)
+		assert.Contains(t, body, "avatar")
 	})
 
 	t.Run("非法扩展名返回 422", func(t *testing.T) {
-		engine := newTestEngine(true)
+		app := newTestApp(true)
 		req := createMultipartRequest(t, "avatar", "script.sh", []byte("#!/bin/sh\necho hack"))
-		rec := httptest.NewRecorder()
-		engine.ServeHTTP(rec, req)
+		code, body := execReq(app, req)
 
-		assert.Equal(t, http.StatusUnprocessableEntity, rec.Code)
-		assert.Contains(t, rec.Body.String(), "avatar")
+		assert.Equal(t, http.StatusUnprocessableEntity, code)
+		assert.Contains(t, body, "avatar")
 	})
 
 	t.Run("超限尺寸 (大于 2MB) 返回 422", func(t *testing.T) {
-		engine := newTestEngine(true)
+		app := newTestApp(true)
 		oversized := make([]byte, 2*1024*1024+16)
 		req := createMultipartRequest(t, "avatar", "huge.png", oversized)
-		rec := httptest.NewRecorder()
-		engine.ServeHTTP(rec, req)
+		code, body := execReq(app, req)
 
-		assert.Equal(t, http.StatusUnprocessableEntity, rec.Code)
-		assert.Contains(t, rec.Body.String(), "avatar")
+		assert.Equal(t, http.StatusUnprocessableEntity, code)
+		assert.Contains(t, body, "avatar")
 	})
 
 	t.Run("伪装图片 (文本伪装成 png) 魔数检测拦截 422", func(t *testing.T) {
-		engine := newTestEngine(true)
+		app := newTestApp(true)
 		fakePNG := []byte("This is plain text pretending to be a png file")
 		req := createMultipartRequest(t, "avatar", "fake.png", fakePNG)
-		rec := httptest.NewRecorder()
-		engine.ServeHTTP(rec, req)
+		code, body := execReq(app, req)
 
-		assert.Equal(t, http.StatusUnprocessableEntity, rec.Code)
-		assert.Contains(t, rec.Body.String(), "avatar")
+		assert.Equal(t, http.StatusUnprocessableEntity, code)
+		assert.Contains(t, body, "avatar")
 	})
 
 	t.Run("仅接受 avatar 字段，不匹配 file 字段返回 422", func(t *testing.T) {
-		engine := newTestEngine(true)
+		app := newTestApp(true)
 		req := createMultipartRequest(t, "file", "fake.png", []byte("content"))
-		rec := httptest.NewRecorder()
-		engine.ServeHTTP(rec, req)
+		code, body := execReq(app, req)
 
-		assert.Equal(t, http.StatusUnprocessableEntity, rec.Code)
-		assert.Contains(t, rec.Body.String(), "avatar")
+		assert.Equal(t, http.StatusUnprocessableEntity, code)
+		assert.Contains(t, body, "avatar")
 	})
 }
 

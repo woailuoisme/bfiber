@@ -1,4 +1,4 @@
-package errs
+package validator
 
 import (
 	"strings"
@@ -30,14 +30,4 @@ func NormalizePath(namespace string) string {
 		}
 	}
 	return b.String()
-}
-
-// rawValidationFields 未经翻译的校验错误兜底转换。
-func rawValidationFields(valErr validator.ValidationErrors) map[string][]string {
-	fields := make(map[string][]string, len(valErr))
-	for _, fe := range valErr {
-		key := FieldPath(fe)
-		fields[key] = append(fields[key], fe.Tag())
-	}
-	return fields
 }

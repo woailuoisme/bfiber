@@ -7,8 +7,8 @@ import (
 
 	"github.com/uptrace/bun"
 
-	"bgin/internal/database/models"
-	platformRealtime "bgin/internal/platform/realtime"
+	"bfiber/internal/database/models"
+	platformRealtime "bfiber/internal/platform/realtime"
 )
 
 // UserChannel 构建受订阅代理保护的个人用户私有频道名称（private:users.userID）。

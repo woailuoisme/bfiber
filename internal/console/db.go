@@ -10,8 +10,8 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/uptrace/bun"
 
-	"bgin/internal/console/core"
-	"bgin/internal/database/seeders"
+	"bfiber/internal/console/core"
+	"bfiber/internal/database/seeders"
 )
 
 // DBMigrateOptions 封装 db:migrate 命令的参数与依赖容器 (SRP & DIP)。

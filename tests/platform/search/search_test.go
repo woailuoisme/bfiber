@@ -9,9 +9,9 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/uptrace/bun"
 
-	"bgin/internal/config"
-	"bgin/internal/platform/search"
-	"bgin/tests/testutil"
+	"bfiber/internal/config"
+	"bfiber/internal/platform/search"
+	"bfiber/tests/testutil"
 )
 
 func TestNoopClientContract(t *testing.T) {

@@ -11,8 +11,8 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/xuri/excelize/v2"
 
-	"bgin/internal/platform/errs"
-	"bgin/internal/platform/excel"
+	"bfiber/internal/platform/errs"
+	"bfiber/internal/platform/excel"
 )
 
 type sampleUser struct {

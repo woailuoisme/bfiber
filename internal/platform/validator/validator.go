@@ -2,6 +2,7 @@
 package validator
 
 import (
+	"bytes"
 	"cmp"
 	"errors"
 	"fmt"
@@ -21,13 +22,11 @@ import (
 
 	"github.com/aarondl/opt/omitnull"
 	"github.com/dustin/go-humanize"
-	"github.com/gin-gonic/gin"
-	"github.com/gin-gonic/gin/binding"
 	govalidator "github.com/go-playground/validator/v10"
-	"github.com/samber/lo"
+	"github.com/gofiber/fiber/v3"
 
-	"bgin/internal/platform/errs"
-	"bgin/internal/platform/i18n"
+	"bfiber/internal/platform/errs"
+	"bfiber/internal/platform/i18n"
 )
 
 func init() {
@@ -41,29 +40,43 @@ type Validatable interface {
 	Validate() error
 }
 
-// customValidator 包装 Gin 默认 StructValidator，在完成标签校验后自动回调 Validatable 接口。
-type customValidator struct {
-	base   binding.StructValidator
+// FiberValidator 包装验证器引擎，在完成标签校验后自动回调 Validatable 接口。
+type FiberValidator struct {
 	engine *govalidator.Validate
 }
 
-func (cv *customValidator) ValidateStruct(obj any) error {
-	if cv.base != nil {
-		if err := cv.base.ValidateStruct(obj); err != nil {
+var (
+	defaultValidator = &FiberValidator{
+		engine: govalidator.New(),
+	}
+	registerMu           sync.Mutex
+	customTagMessageKeys sync.Map // tag -> messageKey string
+	bindingTags          = [...]string{"json", "form", "query", "uri"}
+)
+
+// NewFiberValidator 返回 Fiber v3 兼容的结构体验证器实例。
+func NewFiberValidator() *FiberValidator {
+	return defaultValidator
+}
+
+// Validate 执行结构体标签校验与 Validatable 接口回调。
+func (fv *FiberValidator) Validate(out any) error {
+	if fv.engine != nil {
+		if err := fv.engine.Struct(out); err != nil {
 			return err
 		}
 	}
-	return checkValidatable(obj)
+	return checkValidatable(out)
 }
 
-func (cv *customValidator) Engine() any {
-	if cv.engine != nil {
-		return cv.engine
-	}
-	if cv.base != nil {
-		return cv.base.Engine()
-	}
-	return nil
+// Engine 返回底层验证器引擎实例。
+func (fv *FiberValidator) Engine() *govalidator.Validate {
+	return fv.engine
+}
+
+// Engine 返回默认验证器引擎实例。
+func Engine() *govalidator.Validate {
+	return defaultValidator.engine
 }
 
 // checkValidatable 递归检查对象（或其指针/切片元素）是否实现 Validatable 接口并触发。
@@ -106,32 +119,15 @@ func wrapValidationError(err error) error {
 	return errs.New(errs.CodeValidationFailed, err.Error())
 }
 
-var (
-	registerMu           sync.Mutex
-	customTagMessageKeys sync.Map // tag -> messageKey string
-	bindingTags          = [...]string{"json", "form", "uri"}
-)
-
-// InitEngine 将自定义校验规则与字段名提取函数注册至 Gin 全局 binding.Validator，并挂载 Validatable 钩子。
+// InitEngine 将自定义校验规则与字段名提取函数注册至验证器引擎，并挂载 Validatable 钩子。
 func InitEngine() error {
 	registerMu.Lock()
 	defer registerMu.Unlock()
 
-	var eng *govalidator.Validate
-	if cv, ok := binding.Validator.(*customValidator); ok {
-		eng = cv.engine
-	} else if v, ok := binding.Validator.Engine().(*govalidator.Validate); ok {
-		eng = v
-		binding.Validator = &customValidator{
-			base:   binding.Validator,
-			engine: eng,
-		}
+	if defaultValidator.engine == nil {
+		defaultValidator.engine = govalidator.New()
 	}
-
-	if eng != nil {
-		return registerRules(eng)
-	}
-	return nil
+	return registerRules(defaultValidator.engine)
 }
 
 // RegisterRule 注册自定义校验标签与对应函数，并可选指定文案映射键。
@@ -139,11 +135,11 @@ func RegisterRule(tag string, fn govalidator.Func, messageKey ...string) error {
 	registerMu.Lock()
 	defer registerMu.Unlock()
 
-	if msgKey := lo.FirstOrEmpty(messageKey); msgKey != "" {
-		customTagMessageKeys.Store(tag, msgKey)
+	if len(messageKey) > 0 && messageKey[0] != "" {
+		customTagMessageKeys.Store(tag, messageKey[0])
 	}
-	if v, ok := binding.Validator.Engine().(*govalidator.Validate); ok {
-		return v.RegisterValidation(tag, fn)
+	if defaultValidator.engine != nil {
+		return defaultValidator.engine.RegisterValidation(tag, fn)
 	}
 	return nil
 }
@@ -153,8 +149,8 @@ func RegisterCustomTypeFunc(fn govalidator.CustomTypeFunc, types ...any) {
 	registerMu.Lock()
 	defer registerMu.Unlock()
 
-	if v, ok := binding.Validator.Engine().(*govalidator.Validate); ok {
-		v.RegisterCustomTypeFunc(fn, types...)
+	if defaultValidator.engine != nil {
+		defaultValidator.engine.RegisterCustomTypeFunc(fn, types...)
 	}
 }
 
@@ -244,7 +240,7 @@ var reservedShortNames = map[string]struct{}{
 	"system": {},
 	"me":     {},
 	"api":    {},
-	"bgin":   {},
+	"bfiber": {},
 }
 
 // validateUsernameSlug 校验用户名的字符集。前置长度守卫（1-64 字符），防御恶意超长串造成正则回溯。
@@ -391,21 +387,19 @@ func PasswordStrength(field, password string) error {
 }
 
 // BindOptionalJSON 解析可省略的请求体：空体视为零值对象，非空体仍需是合法 JSON。
-func BindOptionalJSON(c *gin.Context, target any) error {
-	if c.Request.Body == nil || c.Request.ContentLength == 0 {
+func BindOptionalJSON(c fiber.Ctx, target any) error {
+	body := c.Body()
+	if len(bytes.TrimSpace(body)) == 0 {
 		return nil
 	}
-	if err := c.ShouldBindJSON(target); !errors.Is(err, io.EOF) {
-		return err
-	}
-	return nil
+	return c.Bind().Body(target)
 }
 
 // Translate 按请求语言渲染每条校验失败，键为 api.md 约定的字段路径。
 func Translate(translator *i18n.Translator, language string, valErr govalidator.ValidationErrors) map[string][]string {
 	fields := make(map[string][]string, len(valErr))
 	for _, fe := range valErr {
-		field := errs.FieldPath(fe)
+		field := FieldPath(fe)
 		var message string
 		if translator != nil {
 			message = translator.ValidationMessage(language, MessageKey(fe), field, fe.Param())
@@ -419,7 +413,7 @@ func Translate(translator *i18n.Translator, language string, valErr govalidator.
 func MessageKey(fe govalidator.FieldError) string {
 	tag := fe.Tag()
 	if key, ok := customTagMessageKeys.Load(tag); ok {
-		if str, isStr := key.(string); isStr {
+		if str, ok := key.(string); ok {
 			return str
 		}
 	}

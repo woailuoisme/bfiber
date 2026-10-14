@@ -6,7 +6,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"bgin/internal/shared/enums"
+	"bfiber/internal/shared/enums"
 )
 
 func TestRoleEnums(t *testing.T) {

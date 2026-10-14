@@ -7,7 +7,7 @@ import (
 
 	"github.com/samber/lo"
 
-	"bgin/internal/platform/notification/channel/sms"
+	"bfiber/internal/platform/notification/channel/sms"
 )
 
 // Driver 内存记录型短信驱动。

@@ -10,9 +10,9 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"bgin/internal/config"
-	"bgin/internal/console"
-	"bgin/internal/console/core"
+	"bfiber/internal/config"
+	"bfiber/internal/console"
+	"bfiber/internal/console/core"
 )
 
 // TestServeOptions_Validate 测试 HTTP 服务启动参数校验规则。

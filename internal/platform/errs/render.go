@@ -13,15 +13,14 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/gin-gonic/gin"
-	"github.com/go-playground/validator/v10"
+	"github.com/gofiber/fiber/v3"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/samber/oops"
+	"github.com/valyala/fasthttp"
 	"go.uber.org/zap"
 
-	"bgin/internal/platform/i18n"
-	"bgin/internal/platform/logger"
+	"bfiber/internal/platform/logger"
 )
 
 // PostgreSQL 错误码，用于把约束冲突翻译成对调用方有意义的响应。
@@ -57,40 +56,32 @@ func SanitizeMessage(msg string) string {
 	return msg
 }
 
-// errorCodeContextKey 是 gin 上下文里承载已渲染错误码的键。
-//
-// 键名只在本包出现，读写一律走下面两个 Helper：AGENTS §3.6 禁止跨包裸字符串 Context 键，
-// 且这一对读写分散在 errs 与 middleware 两个包，裸字符串极易改一边漏一边。
+// errorCodeContextKey 是 Fiber 上下文 Locals 承载已渲染错误码的键。
 const errorCodeContextKey = "error_code"
 
-// SetErrorCodeContext 把最终错误码写入 gin 上下文，供访问日志与监控采集。
-func SetErrorCodeContext(c *gin.Context, code string) {
+// SetErrorCodeContext 把最终错误码写入 Fiber 上下文，供访问日志与监控采集。
+func SetErrorCodeContext(c fiber.Ctx, code string) {
 	if c == nil || code == "" {
 		return
 	}
-	c.Set(errorCodeContextKey, code)
+	c.Locals(errorCodeContextKey, code)
 }
 
-// ErrorCodeFromContext 读取 gin 上下文中的错误码，缺失或类型不符时返回空串。
-func ErrorCodeFromContext(c *gin.Context) string {
+// ErrorCodeFromContext 读取 Fiber 上下文中的错误码，缺失或类型不符时返回空串。
+func ErrorCodeFromContext(c fiber.Ctx) string {
 	if c == nil {
 		return ""
 	}
-	code, ok := c.Get(errorCodeContextKey)
-	if !ok {
-		return ""
-	}
-	str, _ := code.(string)
+	str, _ := c.Locals(errorCodeContextKey).(string)
 	return str
 }
 
 // Render 映射统一错误响应并写回客户端。
 //
 // 5xx 记录错误根因与调用堆栈；4xx 由外层 AccessLog 统一输出访问日志，避免重复告警。
-// 可选接收 *i18n.Translator 实例以优先进行业务字段级错误翻译，未传入时兜底使用 i18n.Default()。
-func Render(c *gin.Context, err error, customTranslator ...*i18n.Translator) {
+func Render(c fiber.Ctx, err error) error {
 	if err == nil {
-		return
+		return nil
 	}
 
 	status, resp := Map(err)
@@ -98,21 +89,11 @@ func Render(c *gin.Context, err error, customTranslator ...*i18n.Translator) {
 	// 敏感错误信息脱敏保护
 	resp.Message = SanitizeMessage(resp.Message)
 
-	// 针对携带待翻译 fieldKeys 的业务错误，自动尝试使用注入的 i18n 或全局默认与请求头 Accept-Language 完成翻译
-	if len(resp.Errors) == 0 {
-		if translated := resolveTranslatedFieldKeys(c, err, customTranslator...); translated != nil {
-			resp.Errors = translated
-		}
-	}
-
 	SetErrorCodeContext(c, resp.Code)
-	if len(c.Errors) == 0 {
-		_ = c.Error(err)
-	}
 
-	if status >= http.StatusInternalServerError {
+	if status >= fiber.StatusInternalServerError {
 		// 5xx 记录底层根因与调用堆栈，避免对外统一文案遮蔽排错细节。
-		log := logger.FromContext(c.Request.Context())
+		log := logger.FromContext(c.Context())
 		zapFields := []zap.Field{
 			zap.String("stack", Stack(err)),
 			zap.Error(RootCause(err)),
@@ -125,7 +106,7 @@ func Render(c *gin.Context, err error, customTranslator ...*i18n.Translator) {
 		log.Error("request processing failed", zapFields...)
 	}
 
-	c.AbortWithStatusJSON(status, resp)
+	return c.Status(status).JSON(resp)
 }
 
 var sensitiveKeyFragments = []string{
@@ -199,28 +180,29 @@ func Map(err error) (int, Response) {
 		return status, resp
 	}
 
-	if valErr, ok := errors.AsType[validator.ValidationErrors](err); ok {
-		return http.StatusUnprocessableEntity, Response{
-			Code:    string(CodeValidationFailed),
-			Message: msgValidationFailed,
-			Errors:  rawValidationFields(valErr),
-		}
-	}
-
 	if pgErr, ok := errors.AsType[*pgconn.PgError](err); ok {
 		return mapPgError(pgErr)
 	}
 
 	if errors.Is(err, sql.ErrNoRows) || errors.Is(err, pgx.ErrNoRows) {
-		return http.StatusNotFound, Response{Code: string(CodeNotFound), Message: msgNotFound}
+		return fiber.StatusNotFound, Response{Code: string(CodeNotFound), Message: msgNotFound}
 	}
 
 	if errors.Is(err, context.DeadlineExceeded) {
-		return http.StatusGatewayTimeout, Response{Code: string(CodeGatewayTimeout), Message: msgGatewayTimeout}
+		return fiber.StatusGatewayTimeout, Response{Code: string(CodeGatewayTimeout), Message: msgGatewayTimeout}
 	}
 
 	if errors.Is(err, context.Canceled) {
 		return StatusClientClosedRequest, Response{Code: string(CodeClientClosedRequest), Message: msgClientClosedRequest}
+	}
+
+	// 识别 Fiber 原生错误
+	if fiberErr, ok := errors.AsType[*fiber.Error](err); ok {
+		code := CodeForStatus(fiberErr.Code)
+		return fiberErr.Code, Response{
+			Code:    string(code),
+			Message: cmp.Or(fiberErr.Message, MessageForStatus(fiberErr.Code)),
+		}
 	}
 
 	// 识别已在 statuses 登记过的 oops 错误。
@@ -239,19 +221,19 @@ func Map(err error) (int, Response) {
 	}
 
 	// 兜底：未识别错误统一返回 500。
-	return http.StatusInternalServerError, Response{Code: string(CodeInternal), Message: msgInternal}
+	return fiber.StatusInternalServerError, Response{Code: string(CodeInternal), Message: msgInternal}
 }
 
 // mapMalformedBody 识别请求体解析、JSON 解码、查询参数转换与载荷超限的失败。
 func mapMalformedBody(err error) (int, Response, bool) {
-	if _, ok := errors.AsType[*http.MaxBytesError](err); ok {
-		return http.StatusRequestEntityTooLarge, Response{
+	if _, ok := errors.AsType[*http.MaxBytesError](err); ok || errors.Is(err, fasthttp.ErrBodyTooLarge) {
+		return fiber.StatusRequestEntityTooLarge, Response{
 			Code:    string(CodeRequestTooLarge),
 			Message: msgRequestTooLarge,
 		}, true
 	}
 	if isBadRequestError(err) {
-		return http.StatusBadRequest, Response{
+		return fiber.StatusBadRequest, Response{
 			Code:    string(CodeBadRequest),
 			Message: msgBadRequest,
 		}, true
@@ -261,54 +243,29 @@ func mapMalformedBody(err error) (int, Response, bool) {
 }
 
 func isBadRequestError(err error) bool {
-	_, isNum := errors.AsType[*strconv.NumError](err)
-	_, isSyntax := errors.AsType[*json.SyntaxError](err)
-	_, isType := errors.AsType[*json.UnmarshalTypeError](err)
-	return isNum || isSyntax || isType || errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF)
+	if _, ok := errors.AsType[*strconv.NumError](err); ok {
+		return true
+	}
+	if _, ok := errors.AsType[*json.SyntaxError](err); ok {
+		return true
+	}
+	if _, ok := errors.AsType[*json.UnmarshalTypeError](err); ok {
+		return true
+	}
+	if _, ok := errors.AsType[*fiber.BindError](err); ok {
+		return true
+	}
+	return errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF)
 }
 
 // mapPgError 将数据库约束错误映射为业务状态码与文案。
 func mapPgError(err *pgconn.PgError) (int, Response) {
 	switch err.Code {
 	case pgErrUniqueViolation, pgErrForeignKeyViolation, pgErrNotNullViolation:
-		return http.StatusConflict, Response{Code: string(CodeConflict), Message: msgConflict}
+		return fiber.StatusConflict, Response{Code: string(CodeConflict), Message: msgConflict}
 	case pgErrInvalidTextRepresentation:
-		return http.StatusBadRequest, Response{Code: string(CodeBadRequest), Message: msgBadRequest}
+		return fiber.StatusBadRequest, Response{Code: string(CodeBadRequest), Message: msgBadRequest}
 	default:
-		return http.StatusInternalServerError, Response{Code: string(CodeInternal), Message: msgInternal}
+		return fiber.StatusInternalServerError, Response{Code: string(CodeInternal), Message: msgInternal}
 	}
-}
-
-// resolveTranslatedFieldKeys 针对携带待翻译 fieldKeys 的业务错误，自动使用注入的 translator 或全局 i18n 完成翻译。
-func resolveTranslatedFieldKeys(c *gin.Context, err error, customTranslator ...*i18n.Translator) map[string][]string {
-	bizErr, ok := As(err)
-	if !ok || len(bizErr.fieldKeys) == 0 {
-		return nil
-	}
-
-	var translator *i18n.Translator
-	if len(customTranslator) > 0 && customTranslator[0] != nil {
-		translator = customTranslator[0]
-	} else {
-		translator = i18n.Default()
-	}
-	if translator == nil {
-		return nil
-	}
-
-	lang := translator.Language(c.GetHeader("Accept-Language"))
-	translated := make(map[string][]string, len(bizErr.fieldKeys))
-	for field, msgKeys := range bizErr.fieldKeys {
-		for _, mk := range msgKeys {
-			rendered := translator.ValidationMessage(lang, mk.Key, field, mk.Param)
-			if rendered != "" {
-				translated[field] = append(translated[field], rendered)
-			}
-		}
-	}
-
-	if len(translated) == 0 {
-		return nil
-	}
-	return translated
 }

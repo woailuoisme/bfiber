@@ -6,12 +6,12 @@ import (
 
 	"github.com/aarondl/opt/omitnull"
 
-	"bgin/internal/database"
-	"bgin/internal/database/models"
-	"bgin/internal/platform/response"
-	"bgin/internal/platform/validator"
-	"bgin/internal/shared/enums"
-	"bgin/internal/shared/user"
+	"bfiber/internal/database"
+	"bfiber/internal/database/models"
+	"bfiber/internal/platform/response"
+	"bfiber/internal/platform/validator"
+	"bfiber/internal/shared/enums"
+	"bfiber/internal/shared/user"
 )
 
 func init() {
@@ -140,17 +140,17 @@ func (r UpdateUserBody) adminFieldSet() user.AdminFieldSet {
 // ListUsersQueryParams 是 GET /v1/admin/users 的查询参数。
 type ListUsersQueryParams struct {
 	// 当前页码 (从 1 开始，默认 1，上限 1000000，与 maxPage 常量保持一致)
-	Page int `form:"page" json:"page" example:"1" validate:"omitempty,min=1,max=1000000"`
+	Page int `form:"page" json:"page" query:"page" example:"1" validate:"omitempty,min=1,max=1000000"`
 	// 每页条数 (1-100，默认 20)
-	PageSize int `form:"pageSize" json:"pageSize" example:"20" validate:"omitempty,min=1,max=100"`
+	PageSize int `form:"pageSize" json:"pageSize" query:"pageSize" example:"20" validate:"omitempty,min=1,max=100"`
 	// 排序字段 (字段名前加 - 表示倒序，如 -createdAt)
-	Sort string `form:"sort" json:"sort" example:"-createdAt" validate:"omitempty,usersort,max=120"`
+	Sort string `form:"sort" json:"sort" query:"sort" example:"-createdAt" validate:"omitempty,usersort,max=120"`
 	// 关键字搜索 (按邮箱、昵称、用户名模糊检索)
-	Search string `form:"search" json:"search" example:"alex" validate:"omitempty,max=120"`
+	Search string `form:"search" json:"search" query:"search" example:"alex" validate:"omitempty,max=120"`
 	// 按账号状态过滤 (active: 正常活跃, inactive: 未激活, banned: 已封禁)
-	Status Status `form:"status" json:"status" example:"active" enums:"active,inactive,banned" validate:"omitempty,oneof=active inactive banned"`
+	Status Status `form:"status" json:"status" query:"status" example:"active" enums:"active,inactive,banned" validate:"omitempty,oneof=active inactive banned"`
 	// 按权限角色过滤 (user: 普通用户, admin: 系统管理员)
-	Role Role `form:"role" json:"role" example:"user" enums:"user,admin" validate:"omitempty,oneof=user admin"`
+	Role Role `form:"role" json:"role" query:"role" example:"user" enums:"user,admin" validate:"omitempty,oneof=user admin"`
 }
 
 // ToFilter 将 HTTP 查询参数投影为底层仓储过滤条件，内聚修剪与排序归一化规则。

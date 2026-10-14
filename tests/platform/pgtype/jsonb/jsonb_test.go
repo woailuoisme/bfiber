@@ -11,7 +11,7 @@ import (
 	"github.com/uptrace/bun"
 	"github.com/uptrace/bun/dialect/pgdialect"
 
-	"bgin/internal/platform/pgtype/jsonb"
+	"bfiber/internal/platform/pgtype/jsonb"
 )
 
 type userProfile struct {

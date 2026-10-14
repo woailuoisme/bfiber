@@ -6,7 +6,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/uptrace/bun"
 
-	"bgin/internal/platform/hasher"
+	"bfiber/internal/platform/hasher"
 )
 
 // User 快捷构造 UserFactory 实例。

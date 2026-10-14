@@ -1,59 +1,42 @@
 package global
 
 import (
-	"net/http"
 	"slices"
-	"strings"
 
-	"github.com/gin-gonic/gin"
+	"github.com/gofiber/fiber/v3"
+	"github.com/gofiber/fiber/v3/middleware/cors"
 )
 
-const (
+var (
 	// allowedRequestHeaders 跨域预检允许携带的请求头。
-	allowedRequestHeaders = "Authorization, Content-Type, Accept, x-request-id, Idempotency-Key"
+	allowedRequestHeaders = []string{"Authorization", "Content-Type", "Accept", "x-request-id", "Idempotency-Key", "X-Idempotency-Key"}
 	// exposedResponseHeaders 允许浏览器脚本读取的响应头。
-	exposedResponseHeaders = "x-request-id, X-RateLimit-Limit, X-RateLimit-Remaining, X-RateLimit-Reset, Retry-After"
+	exposedResponseHeaders = []string{"x-request-id", "X-RateLimit-Limit", "X-RateLimit-Remaining", "X-RateLimit-Reset", "Retry-After", "Idempotent-Replayed", "ETag"}
+	// allowedMethods 跨域预检允许的 HTTP 方法。
+	allowedMethods = []string{
+		fiber.MethodGet,
+		fiber.MethodPost,
+		fiber.MethodPatch,
+		fiber.MethodPut,
+		fiber.MethodDelete,
+		fiber.MethodOptions,
+	}
 )
 
 // CORS 【全局中间件】处理跨域预检与响应头配置。
-func (m *Middleware) CORS() gin.HandlerFunc {
+func (m *Middleware) CORS() fiber.Handler {
 	allowAll := slices.Contains(m.cors.AllowedOrigins, "*")
-	allowed := make(map[string]struct{}, len(m.cors.AllowedOrigins))
-	for _, origin := range m.cors.AllowedOrigins {
-		if origin != "*" {
-			allowed[strings.ToLower(origin)] = struct{}{}
-		}
+	origins := m.cors.AllowedOrigins
+	if len(origins) == 0 {
+		origins = []string{"*"}
+		allowAll = true
 	}
 
-	return func(c *gin.Context) {
-		origin := c.GetHeader("Origin")
-		if origin == "" {
-			c.Next()
-			return
-		}
-
-		_, listed := allowed[strings.ToLower(origin)]
-		switch {
-		case listed:
-			// 白名单来源：回显具体来源、允许凭证并追加 Vary 头。
-			c.Header("Access-Control-Allow-Origin", origin)
-			c.Header("Access-Control-Allow-Credentials", "true")
-			c.Writer.Header().Add("Vary", "Origin")
-		case allowAll:
-			// 通配符来源：仅回显通配符，规范禁止携带凭证。
-			c.Header("Access-Control-Allow-Origin", "*")
-		}
-
-		if listed || allowAll {
-			c.Header("Access-Control-Allow-Headers", allowedRequestHeaders)
-			c.Header("Access-Control-Allow-Methods", "GET, POST, PATCH, PUT, DELETE, OPTIONS")
-			c.Header("Access-Control-Expose-Headers", exposedResponseHeaders)
-		}
-
-		if c.Request.Method == http.MethodOptions {
-			c.AbortWithStatus(http.StatusNoContent)
-			return
-		}
-		c.Next()
-	}
+	return cors.New(cors.Config{
+		AllowOrigins:     origins,
+		AllowHeaders:     allowedRequestHeaders,
+		AllowMethods:     allowedMethods,
+		AllowCredentials: !allowAll,
+		ExposeHeaders:    exposedResponseHeaders,
+	})
 }

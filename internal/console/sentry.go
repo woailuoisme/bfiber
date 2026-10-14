@@ -9,8 +9,8 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"bgin/internal/console/core"
-	platformsentry "bgin/internal/platform/sentry"
+	"bfiber/internal/console/core"
+	platformsentry "bfiber/internal/platform/sentry"
 )
 
 // SentryTestOptions 封装 sentry:test 命令的运行参数与依赖容器 (SRP & DIP)。
@@ -22,7 +22,7 @@ type SentryTestOptions struct {
 // NewSentryTestOptions 构造 SentryTestOptions 实例。
 func NewSentryTestOptions(f Factory) *SentryTestOptions {
 	return &SentryTestOptions{
-		Message: "Test GlitchTip connection from bgin CLI",
+		Message: "Test GlitchTip connection from bfiber CLI",
 		Factory: f,
 	}
 }
@@ -30,7 +30,7 @@ func NewSentryTestOptions(f Factory) *SentryTestOptions {
 // Complete 补全配置与默认参数。
 func (o *SentryTestOptions) Complete(_ *cobra.Command, _ []string) error {
 	if strings.TrimSpace(o.Message) == "" {
-		o.Message = "Test GlitchTip connection from bgin CLI"
+		o.Message = "Test GlitchTip connection from bfiber CLI"
 	}
 	return nil
 }

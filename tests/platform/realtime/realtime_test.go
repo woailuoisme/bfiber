@@ -15,10 +15,10 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"bgin/internal/config"
-	"bgin/internal/platform/authentication"
-	"bgin/internal/platform/realtime"
-	"bgin/internal/shared/enums"
+	"bfiber/internal/config"
+	"bfiber/internal/platform/authentication"
+	"bfiber/internal/platform/realtime"
+	"bfiber/internal/shared/enums"
 )
 
 const testSecret = "centrifugo-test-secret-key-12345"

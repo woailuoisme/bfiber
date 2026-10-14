@@ -7,8 +7,8 @@ import (
 	govalidator "github.com/go-playground/validator/v10"
 	"github.com/samber/lo"
 
-	"bgin/internal/database/models"
-	"bgin/internal/platform/validator"
+	"bfiber/internal/database/models"
+	"bfiber/internal/platform/validator"
 )
 
 func init() {

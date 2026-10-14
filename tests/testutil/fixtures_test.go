@@ -7,9 +7,9 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"bgin/internal/database/models"
-	"bgin/internal/shared/enums"
-	"bgin/tests/testutil"
+	"bfiber/internal/database/models"
+	"bfiber/internal/shared/enums"
+	"bfiber/tests/testutil"
 )
 
 func TestUserFixtureBuilder(t *testing.T) {

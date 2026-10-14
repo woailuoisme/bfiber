@@ -9,20 +9,21 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"testing"
 	"time"
 
-	"github.com/gin-gonic/gin"
+	"github.com/gofiber/fiber/v3"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"bgin/internal/config"
-	featureRealtime "bgin/internal/features/realtime"
-	"bgin/internal/platform/authentication"
-	platformRealtime "bgin/internal/platform/realtime"
-	"bgin/internal/shared/enums"
+	"bfiber/internal/config"
+	featureRealtime "bfiber/internal/features/realtime"
+	"bfiber/internal/platform/authentication"
+	platformRealtime "bfiber/internal/platform/realtime"
+	"bfiber/internal/shared/enums"
 )
 
 func generateTestSig(secret string, body []byte) string {
@@ -33,7 +34,6 @@ func generateTestSig(secret string, body []byte) string {
 
 // TestServiceIssueToken 验证服务层 Token 签发逻辑。
 func TestServiceIssueToken(t *testing.T) {
-	gin.SetMode(gin.TestMode)
 
 	t.Run("未启用时返回错误", func(t *testing.T) {
 		cfg := &config.Config{
@@ -121,7 +121,6 @@ func TestServiceAuthorizeSubscribe(t *testing.T) {
 
 // TestHandlerHTTP 针对 Handler 执行全链路 HTTP 测试。
 func TestHandlerHTTP(t *testing.T) {
-	gin.SetMode(gin.TestMode)
 	secret := "centrifugo-secret-hmac-test"
 
 	cfg := &config.Config{
@@ -141,24 +140,34 @@ func TestHandlerHTTP(t *testing.T) {
 	svc := featureRealtime.NewService(featureRealtime.Deps{Gateway: gw, Cfg: cfg, Secret: cfg.Realtime.Secret})
 	handler := featureRealtime.NewHandler(svc)
 
-	router := gin.New()
+	app := fiber.New()
 
 	// 模拟已认证中间件
-	router.GET("/v1/realtime/token", func(c *gin.Context) {
-		ctx := authentication.With(c.Request.Context(), authentication.Identity{
+	app.Get("/v1/realtime/token", func(c fiber.Ctx) error {
+		ctx := authentication.With(c.Context(), authentication.Identity{
 			UserID: "user_777",
 			Role:   string(enums.RoleUser),
 		})
-		c.Request = c.Request.WithContext(ctx)
-		handler.GetToken(c)
+		c.SetContext(ctx)
+		return handler.GetToken(c)
 	})
 
-	router.POST("/v1/realtime/proxy/subscribe", handler.ProxySubscribe)
+	app.Post("/v1/realtime/proxy/subscribe", handler.ProxySubscribe)
+
+	serveHTTP := func(app *fiber.App, req *http.Request) *httptest.ResponseRecorder {
+		resp, err := app.Test(req, fiber.TestConfig{Timeout: 0})
+		require.NoError(t, err)
+		defer func() { _ = resp.Body.Close() }()
+		w := httptest.NewRecorder()
+		w.Code = resp.StatusCode
+		body, _ := io.ReadAll(resp.Body)
+		w.Body.Write(body)
+		return w
+	}
 
 	t.Run("GET /v1/realtime/token 返回成功凭据", func(t *testing.T) {
-		w := httptest.NewRecorder()
 		req, _ := http.NewRequest(http.MethodGet, "/v1/realtime/token", nil)
-		router.ServeHTTP(w, req)
+		w := serveHTTP(app, req)
 
 		require.Equal(t, http.StatusOK, w.Code)
 		var res featureRealtime.TokenResponse
@@ -168,23 +177,21 @@ func TestHandlerHTTP(t *testing.T) {
 	})
 
 	t.Run("POST /v1/realtime/proxy/subscribe 签名错误拦截", func(t *testing.T) {
-		w := httptest.NewRecorder()
 		body := []byte(`{"user":"u1","channel":"public:chat"}`)
 		req, _ := http.NewRequest(http.MethodPost, "/v1/realtime/proxy/subscribe", bytes.NewReader(body))
 		req.Header.Set("X-Centrifugo-Signature", "wrong-signature")
-		router.ServeHTTP(w, req)
+		w := serveHTTP(app, req)
 
 		require.Equal(t, http.StatusForbidden, w.Code)
 	})
 
 	t.Run("POST /v1/realtime/proxy/subscribe 验签通过并允许订阅", func(t *testing.T) {
-		w := httptest.NewRecorder()
 		body := []byte(`{"user":"u1","channel":"public:chat"}`)
 		sig := generateTestSig(secret, body)
 
 		req, _ := http.NewRequest(http.MethodPost, "/v1/realtime/proxy/subscribe", bytes.NewReader(body))
 		req.Header.Set("X-Centrifugo-Signature", sig)
-		router.ServeHTTP(w, req)
+		w := serveHTTP(app, req)
 
 		require.Equal(t, http.StatusOK, w.Code)
 		var resp platformRealtime.SubscribeResponse

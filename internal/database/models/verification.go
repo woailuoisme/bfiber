@@ -6,7 +6,7 @@ import (
 
 	"github.com/uptrace/bun"
 
-	"bgin/internal/database"
+	"bfiber/internal/database"
 )
 
 // Verification 对应 "verification" 表：一次性凭据记录。

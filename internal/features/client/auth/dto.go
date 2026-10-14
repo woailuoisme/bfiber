@@ -3,7 +3,7 @@ package auth
 import (
 	"time"
 
-	"bgin/internal/database/models"
+	"bfiber/internal/database/models"
 )
 
 // UserResource 是认证端点返回的用户档案资源视图。

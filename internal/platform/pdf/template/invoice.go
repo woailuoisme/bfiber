@@ -11,8 +11,8 @@ import (
 	"github.com/samber/lo"
 	"github.com/samber/oops"
 
-	"bgin/internal/platform/i18n"
-	"bgin/internal/platform/pdf"
+	"bfiber/internal/platform/i18n"
+	"bfiber/internal/platform/pdf"
 )
 
 // InvoiceItem 描述发票/账单明细清单项。

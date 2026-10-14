@@ -17,8 +17,8 @@ import (
 
 	"github.com/dromara/carbon/v2"
 
-	"bgin/internal/platform/errs"
-	"bgin/internal/platform/payment/enums"
+	"bfiber/internal/platform/errs"
+	"bfiber/internal/platform/payment/enums"
 )
 
 const (

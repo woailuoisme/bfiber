@@ -12,11 +12,11 @@ import (
 	"testing"
 	"time"
 
-	"github.com/gin-gonic/gin"
+	"github.com/gofiber/fiber/v3"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"bgin/internal/platform/errs"
+	"bfiber/internal/platform/errs"
 )
 
 // mailpitBaseURL 是本地 Mailpit 的 HTTP 接口，用于取回真实投递的验证码。
@@ -233,12 +233,12 @@ func TestProfilePatchThreeState(t *testing.T) {
 
 	t.Run("自助修改不接受邮箱与角色", func(t *testing.T) {
 		result := callJSON(t, engine, http.MethodPatch, "/v1/users/me", map[string]any{
-			"email": "attacker@bgin.local",
+			"email": "attacker@bfiber.local",
 			"role":  "admin",
 		}, token)
 
 		require.Equal(t, http.StatusOK, result.Status, result.Raw)
-		assert.NotEqual(t, "attacker@bgin.local", str(result.Body, "email"))
+		assert.NotEqual(t, "attacker@bfiber.local", str(result.Body, "email"))
 		assert.NotEqual(t, "admin", str(result.Body, "role"))
 	})
 }
@@ -507,7 +507,7 @@ func TestRateLimitHeaders(t *testing.T) {
 	engine := newEngine(t)
 
 	result := callJSON(t, engine, http.MethodPost, "/v1/auth/sign-in/email", map[string]any{
-		"email": "nobody@bgin.local", "password": "whatever1",
+		"email": "nobody@bfiber.local", "password": "whatever1",
 	}, "")
 
 	assert.Equal(t, http.StatusUnauthorized, result.Status)
@@ -562,10 +562,10 @@ func TestEmailVerificationOTPFlow(t *testing.T) {
 }
 
 // signInAdmin 用 .env 里的种子管理员登录。
-func signInAdmin(t *testing.T, engine *gin.Engine) string {
+func signInAdmin(t *testing.T, engine *fiber.App) string {
 	t.Helper()
 
-	email := envOr("SEED_ADMIN_EMAIL", "admin@bgin.local")
+	email := envOr("SEED_ADMIN_EMAIL", "admin@bfiber.local")
 	password := envOr("SEED_ADMIN_PASSWORD", "admin12345")
 
 	result := callJSON(t, engine, http.MethodPost, "/v1/auth/sign-in/email", map[string]any{

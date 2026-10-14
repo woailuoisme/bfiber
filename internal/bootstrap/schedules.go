@@ -3,8 +3,8 @@ package bootstrap
 import (
 	"time"
 
-	"bgin/internal/features/system"
-	"bgin/internal/platform/queue"
+	"bfiber/internal/features/system"
+	"bfiber/internal/platform/queue"
 )
 
 // RegisterSchedules 集中编排并挂载全应用所有周期性定时任务规则（系统 Crontab 总表）。

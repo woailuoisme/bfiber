@@ -14,8 +14,7 @@ import (
 	"github.com/lionsoul2014/ip2region/binding/golang/xdb"
 	"github.com/spf13/cobra"
 
-	"bgin/internal/console/core"
-	"bgin/internal/platform/resilience"
+	"bfiber/internal/console/core"
 )
 
 // 预设官方源与国内高可用加速镜像源列表。
@@ -102,7 +101,7 @@ func (o *GeoIPUpdateOptions) Run(ctx context.Context) error {
 
 	client := o.HTTPClient
 	if client == nil {
-		client = resilience.NewResilientHTTPClient(resilience.ResilientTransportConfig{Timeout: 90 * time.Second})
+		client = &http.Client{Timeout: 90 * time.Second}
 	}
 
 	var downloadErr error
@@ -140,7 +139,7 @@ func (o *GeoIPUpdateOptions) downloadFile(ctx context.Context, client *http.Clie
 	if err != nil {
 		return err
 	}
-	req.Header.Set("User-Agent", "bgin-cli/geoip-updater")
+	req.Header.Set("User-Agent", "bfiber-cli/geoip-updater")
 	req.Header.Set("Accept-Encoding", "identity")
 
 	resp, err := client.Do(req)

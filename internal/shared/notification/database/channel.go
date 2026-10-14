@@ -11,9 +11,9 @@ import (
 	"github.com/samber/oops"
 	"github.com/uptrace/bun"
 
-	"bgin/internal/database/models"
-	"bgin/internal/platform/errs"
-	"bgin/internal/platform/notification/contract"
+	"bfiber/internal/database/models"
+	"bfiber/internal/platform/errs"
+	"bfiber/internal/platform/notification/contract"
 )
 
 // Channel 数据库通知渠道实现。

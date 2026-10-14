@@ -9,7 +9,7 @@ import (
 	"strings"
 	"time"
 
-	"bgin/internal/platform/errs"
+	"bfiber/internal/platform/errs"
 )
 
 // 守卫常用错误定义。

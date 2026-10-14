@@ -12,7 +12,7 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"bgin/internal/console/core"
+	"bfiber/internal/console/core"
 )
 
 // jwtSecretRegexp 匹配 .env 中已存在的 JWT_SECRET 配置行。

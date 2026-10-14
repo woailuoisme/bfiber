@@ -8,7 +8,7 @@ import (
 const (
 	defaultTemporalHostPort    = "127.0.0.1:7233"
 	defaultTemporalNamespace   = "default"
-	defaultTemporalTaskQueue   = "bgin-tasks"
+	defaultTemporalTaskQueue   = "bfiber-tasks"
 	defaultTemporalConcurrency = 10
 )
 

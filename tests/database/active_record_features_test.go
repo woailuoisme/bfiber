@@ -12,8 +12,8 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"bgin/internal/database"
-	"bgin/internal/database/models"
+	"bfiber/internal/database"
+	"bfiber/internal/database/models"
 )
 
 // TestActiveRecord_Execution_EloquentV13_Features 深度测试 Eloquent v13 风格的全新执行层方法。

@@ -16,7 +16,7 @@ import (
 	"github.com/samber/oops"
 	"github.com/xuri/excelize/v2"
 
-	"bgin/internal/platform/errs"
+	"bfiber/internal/platform/errs"
 )
 
 const (

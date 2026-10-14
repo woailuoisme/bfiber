@@ -9,8 +9,8 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"bgin/internal/database"
-	"bgin/internal/database/models"
+	"bfiber/internal/database"
+	"bfiber/internal/database/models"
 )
 
 // TestActiveRecord_Execution_MutationsAndLifecycle 验证数据变更（增删改查）、脏追踪与模型生命周期。

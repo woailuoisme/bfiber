@@ -4,25 +4,26 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"sync"
 	"testing"
 	"time"
 
-	"github.com/gin-gonic/gin"
+	"github.com/gofiber/fiber/v3"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"bgin/internal/config"
-	"bgin/internal/database/models"
-	"bgin/internal/middleware"
-	"bgin/internal/middleware/global"
-	"bgin/internal/platform/authentication"
-	"bgin/internal/platform/authorization"
-	"bgin/internal/platform/cache"
-	"bgin/internal/platform/errs"
-	"bgin/internal/shared/user"
+	"bfiber/internal/config"
+	"bfiber/internal/database/models"
+	"bfiber/internal/middleware"
+	"bfiber/internal/middleware/global"
+	"bfiber/internal/platform/authentication"
+	"bfiber/internal/platform/authorization"
+	"bfiber/internal/platform/cache"
+	"bfiber/internal/platform/errs"
+	"bfiber/internal/shared/user"
 )
 
 type memAuthBlacklistStore struct {
@@ -94,12 +95,10 @@ func setupAuthEnv() (
 	*authentication.Guard[*models.User],
 	*mockUserRepo,
 ) {
-	gin.SetMode(gin.TestMode)
-
 	store := newMemAuthBlacklistStore()
 	tokens := authentication.NewTokenIssuer(config.JWTConfig{
 		Secret:     "0123456789abcdef0123456789abcdef",
-		Issuer:     "bgin-test",
+		Issuer:     "bfiber-test",
 		AccessTTL:  15 * time.Minute,
 		RefreshTTL: 24 * time.Hour,
 	}, store)
@@ -131,49 +130,52 @@ func setupAuthEnv() (
 func TestAuth_MissingOrMalformedHeader(t *testing.T) {
 	m, _, _, _, _ := setupAuthEnv()
 
-	router := gin.New()
-	router.Use(global.New(global.Deps{}).ErrorHandler())
-	router.GET("/protected", m.Auth(), func(c *gin.Context) {
-		c.Status(http.StatusOK)
+	app := fiber.New(fiber.Config{
+		ErrorHandler: global.New(global.Deps{}).ErrorHandler(),
+	})
+	app.Get("/protected", m.Auth(), func(c fiber.Ctx) error {
+		return c.SendStatus(fiber.StatusOK)
 	})
 
 	// 1. 缺失报头
 	req := httptest.NewRequest(http.MethodGet, "/protected", nil)
-	w := httptest.NewRecorder()
-	router.ServeHTTP(w, req)
-	assert.Equal(t, http.StatusUnauthorized, w.Code)
+	resp, err := app.Test(req, fiber.TestConfig{Timeout: 0})
+	require.NoError(t, err)
+	assert.Equal(t, fiber.StatusUnauthorized, resp.StatusCode)
 
+	bodyBytes, err := io.ReadAll(resp.Body)
+	require.NoError(t, err)
 	var errResp errs.Response
-	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &errResp))
+	require.NoError(t, json.Unmarshal(bodyBytes, &errResp))
 	assert.Equal(t, string(errs.CodeAuthTokenInvalid), errResp.Code)
 
 	// 2. 畸形 scheme
 	req = httptest.NewRequest(http.MethodGet, "/protected", nil)
 	req.Header.Set("Authorization", "Basic dXNlcjpwYXNz")
-	w = httptest.NewRecorder()
-	router.ServeHTTP(w, req)
-	assert.Equal(t, http.StatusUnauthorized, w.Code)
+	resp, err = app.Test(req, fiber.TestConfig{Timeout: 0})
+	require.NoError(t, err)
+	assert.Equal(t, fiber.StatusUnauthorized, resp.StatusCode)
 
 	// 3. 空 Bearer
 	req = httptest.NewRequest(http.MethodGet, "/protected", nil)
 	req.Header.Set("Authorization", "Bearer ")
-	w = httptest.NewRecorder()
-	router.ServeHTTP(w, req)
-	assert.Equal(t, http.StatusUnauthorized, w.Code)
+	resp, err = app.Test(req, fiber.TestConfig{Timeout: 0})
+	require.NoError(t, err)
+	assert.Equal(t, fiber.StatusUnauthorized, resp.StatusCode)
 
 	// 4. 仅 Bearer 无后续参数
 	req = httptest.NewRequest(http.MethodGet, "/protected", nil)
 	req.Header.Set("Authorization", "Bearer")
-	w = httptest.NewRecorder()
-	router.ServeHTTP(w, req)
-	assert.Equal(t, http.StatusUnauthorized, w.Code)
+	resp, err = app.Test(req, fiber.TestConfig{Timeout: 0})
+	require.NoError(t, err)
+	assert.Equal(t, fiber.StatusUnauthorized, resp.StatusCode)
 
 	// 5. 多段超额参数
 	req = httptest.NewRequest(http.MethodGet, "/protected", nil)
 	req.Header.Set("Authorization", "Bearer token1 token2")
-	w = httptest.NewRecorder()
-	router.ServeHTTP(w, req)
-	assert.Equal(t, http.StatusUnauthorized, w.Code)
+	resp, err = app.Test(req, fiber.TestConfig{Timeout: 0})
+	require.NoError(t, err)
+	assert.Equal(t, fiber.StatusUnauthorized, resp.StatusCode)
 }
 
 // TestAuth_DefaultGuardSuccess 验证默认守卫 (client) 成功解析令牌并将身份写入上下文，同时支持多空格或制表符容错。
@@ -190,16 +192,17 @@ func TestAuth_DefaultGuardSuccess(t *testing.T) {
 	sess, err := clientGuard.Login(context.Background(), repo.users["usr_client_1"])
 	require.NoError(t, err)
 
-	router := gin.New()
-	router.Use(global.New(global.Deps{}).ErrorHandler())
+	app := fiber.New(fiber.Config{
+		ErrorHandler: global.New(global.Deps{}).ErrorHandler(),
+	})
 
 	var capturedID authentication.Identity
-	router.GET("/client/me", m.Auth(), func(c *gin.Context) {
-		id, ok := authentication.FromContext(c.Request.Context())
+	app.Get("/client/me", m.Auth(), func(c fiber.Ctx) error {
+		id, ok := authentication.FromContext(c.Context())
 		if ok {
 			capturedID = id
 		}
-		c.Status(http.StatusOK)
+		return c.SendStatus(fiber.StatusOK)
 	})
 
 	// 验证标准单空格、连续多空格及制表符均可正确提取
@@ -213,10 +216,10 @@ func TestAuth_DefaultGuardSuccess(t *testing.T) {
 		capturedID = authentication.Identity{}
 		req := httptest.NewRequest(http.MethodGet, "/client/me", nil)
 		req.Header.Set("Authorization", h)
-		w := httptest.NewRecorder()
-		router.ServeHTTP(w, req)
+		resp, err := app.Test(req, fiber.TestConfig{Timeout: 0})
+		require.NoError(t, err)
 
-		assert.Equal(t, http.StatusOK, w.Code)
+		assert.Equal(t, fiber.StatusOK, resp.StatusCode)
 		assert.Equal(t, "usr_client_1", capturedID.UserID)
 		assert.Equal(t, string(models.RoleUser), capturedID.Role)
 	}
@@ -243,30 +246,33 @@ func TestAuth_NamedAdminGuard(t *testing.T) {
 	adminSess, err := adminGuard.Login(context.Background(), repo.users["usr_admin"])
 	require.NoError(t, err)
 
-	router := gin.New()
-	router.Use(global.New(global.Deps{}).ErrorHandler())
-	router.GET("/admin/dashboard", m.Auth("admin"), func(c *gin.Context) {
-		c.Status(http.StatusOK)
+	app := fiber.New(fiber.Config{
+		ErrorHandler: global.New(global.Deps{}).ErrorHandler(),
+	})
+	app.Get("/admin/dashboard", m.Auth("admin"), func(c fiber.Ctx) error {
+		return c.SendStatus(fiber.StatusOK)
 	})
 
 	// 1. 普通用户携带有效令牌访问 admin 接口，被 AdminPolicy 拦截返回 403 Forbidden
 	req := httptest.NewRequest(http.MethodGet, "/admin/dashboard", nil)
 	req.Header.Set("Authorization", "Bearer "+clientSess.Token)
-	w := httptest.NewRecorder()
-	router.ServeHTTP(w, req)
+	resp, err := app.Test(req, fiber.TestConfig{Timeout: 0})
+	require.NoError(t, err)
 
-	assert.Equal(t, http.StatusForbidden, w.Code)
+	assert.Equal(t, fiber.StatusForbidden, resp.StatusCode)
+	bodyBytes, err := io.ReadAll(resp.Body)
+	require.NoError(t, err)
 	var errResp errs.Response
-	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &errResp))
+	require.NoError(t, json.Unmarshal(bodyBytes, &errResp))
 	assert.Equal(t, string(errs.CodeForbidden), errResp.Code)
 
 	// 2. 管理员携带有效令牌访问 admin 接口，放行 200 OK
 	req = httptest.NewRequest(http.MethodGet, "/admin/dashboard", nil)
 	req.Header.Set("Authorization", "Bearer "+adminSess.Token)
-	w = httptest.NewRecorder()
-	router.ServeHTTP(w, req)
+	resp, err = app.Test(req, fiber.TestConfig{Timeout: 0})
+	require.NoError(t, err)
 
-	assert.Equal(t, http.StatusOK, w.Code)
+	assert.Equal(t, fiber.StatusOK, resp.StatusCode)
 }
 
 // TestAuth_RevocationEpoch 验证用户级注销纪元触发后，HTTP 网关即时拒绝已注销令牌。
@@ -282,18 +288,19 @@ func TestAuth_RevocationEpoch(t *testing.T) {
 	sess, err := clientGuard.Login(context.Background(), repo.users["usr_revoked"])
 	require.NoError(t, err)
 
-	router := gin.New()
-	router.Use(global.New(global.Deps{}).ErrorHandler())
-	router.GET("/client/profile", m.Auth("client"), func(c *gin.Context) {
-		c.Status(http.StatusOK)
+	app := fiber.New(fiber.Config{
+		ErrorHandler: global.New(global.Deps{}).ErrorHandler(),
+	})
+	app.Get("/client/profile", m.Auth("client"), func(c fiber.Ctx) error {
+		return c.SendStatus(fiber.StatusOK)
 	})
 
 	// 初始状态下有效
 	req := httptest.NewRequest(http.MethodGet, "/client/profile", nil)
 	req.Header.Set("Authorization", "Bearer "+sess.Token)
-	w := httptest.NewRecorder()
-	router.ServeHTTP(w, req)
-	assert.Equal(t, http.StatusOK, w.Code)
+	resp, err := app.Test(req, fiber.TestConfig{Timeout: 0})
+	require.NoError(t, err)
+	assert.Equal(t, fiber.StatusOK, resp.StatusCode)
 
 	// 触发用户级全局作废（如密码重置或点击注销所有设备）
 	err = clientGuard.InvalidateAll(context.Background(), "usr_revoked")
@@ -302,12 +309,14 @@ func TestAuth_RevocationEpoch(t *testing.T) {
 	// 再次请求返回 401 撤销错误
 	req = httptest.NewRequest(http.MethodGet, "/client/profile", nil)
 	req.Header.Set("Authorization", "Bearer "+sess.Token)
-	w = httptest.NewRecorder()
-	router.ServeHTTP(w, req)
+	resp, err = app.Test(req, fiber.TestConfig{Timeout: 0})
+	require.NoError(t, err)
 
-	assert.Equal(t, http.StatusUnauthorized, w.Code)
+	assert.Equal(t, fiber.StatusUnauthorized, resp.StatusCode)
+	bodyBytes, err := io.ReadAll(resp.Body)
+	require.NoError(t, err)
 	var errResp errs.Response
-	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &errResp))
+	require.NoError(t, json.Unmarshal(bodyBytes, &errResp))
 	assert.Equal(t, string(errs.CodeAuthTokenRevoked), errResp.Code)
 }
 
@@ -315,7 +324,7 @@ func TestAuth_RevocationEpoch(t *testing.T) {
 func TestAuth_FallbackWithoutAuthManager(t *testing.T) {
 	tokens := authentication.NewTokenIssuer(config.JWTConfig{
 		Secret:     "0123456789abcdef0123456789abcdef",
-		Issuer:     "bgin-test",
+		Issuer:     "bfiber-test",
 		AccessTTL:  15 * time.Minute,
 		RefreshTTL: 24 * time.Hour,
 	}, nil)
@@ -328,25 +337,26 @@ func TestAuth_FallbackWithoutAuthManager(t *testing.T) {
 	pair, err := tokens.Issue("usr_fallback", "user")
 	require.NoError(t, err)
 
-	router := gin.New()
-	router.Use(global.New(global.Deps{}).ErrorHandler())
-	router.GET("/fallback", m.Auth(), func(c *gin.Context) {
-		c.Status(http.StatusOK)
+	app := fiber.New(fiber.Config{
+		ErrorHandler: global.New(global.Deps{}).ErrorHandler(),
+	})
+	app.Get("/fallback", m.Auth(), func(c fiber.Ctx) error {
+		return c.SendStatus(fiber.StatusOK)
 	})
 
 	req := httptest.NewRequest(http.MethodGet, "/fallback", nil)
 	req.Header.Set("Authorization", "Bearer "+pair.AccessToken)
-	w := httptest.NewRecorder()
-	router.ServeHTTP(w, req)
+	resp, err := app.Test(req, fiber.TestConfig{Timeout: 0})
+	require.NoError(t, err)
 
-	assert.Equal(t, http.StatusOK, w.Code)
+	assert.Equal(t, fiber.StatusOK, resp.StatusCode)
 }
 
 // TestAuth_NamedGuardWithoutAuthManager 验证未注入 AuthManager 时使用指定守卫触发 fail-closed 错误。
 func TestAuth_NamedGuardWithoutAuthManager(t *testing.T) {
 	tokens := authentication.NewTokenIssuer(config.JWTConfig{
 		Secret:     "0123456789abcdef0123456789abcdef",
-		Issuer:     "bgin-test",
+		Issuer:     "bfiber-test",
 		AccessTTL:  15 * time.Minute,
 		RefreshTTL: 24 * time.Hour,
 	}, nil)
@@ -359,18 +369,19 @@ func TestAuth_NamedGuardWithoutAuthManager(t *testing.T) {
 	pair, err := tokens.Issue("usr_admin_1", "admin")
 	require.NoError(t, err)
 
-	router := gin.New()
-	router.Use(global.New(global.Deps{}).ErrorHandler())
-	router.GET("/admin/protected", m.Auth("admin"), func(c *gin.Context) {
-		c.Status(http.StatusOK)
+	app := fiber.New(fiber.Config{
+		ErrorHandler: global.New(global.Deps{}).ErrorHandler(),
+	})
+	app.Get("/admin/protected", m.Auth("admin"), func(c fiber.Ctx) error {
+		return c.SendStatus(fiber.StatusOK)
 	})
 
 	req := httptest.NewRequest(http.MethodGet, "/admin/protected", nil)
 	req.Header.Set("Authorization", "Bearer "+pair.AccessToken)
-	w := httptest.NewRecorder()
-	router.ServeHTTP(w, req)
+	resp, err := app.Test(req, fiber.TestConfig{Timeout: 0})
+	require.NoError(t, err)
 
-	assert.Equal(t, http.StatusInternalServerError, w.Code)
+	assert.Equal(t, fiber.StatusInternalServerError, resp.StatusCode)
 }
 
 // TestAuth_NoTokensWithoutAuthManager 验证未注入 AuthManager 且未配置 Tokens 时触发 500 内部错误。
@@ -380,37 +391,41 @@ func TestAuth_NoTokensWithoutAuthManager(t *testing.T) {
 		AuthManager: nil,
 	})
 
-	router := gin.New()
-	router.Use(global.New(global.Deps{}).ErrorHandler())
-	router.GET("/protected", m.Auth(), func(c *gin.Context) {
-		c.Status(http.StatusOK)
+	app := fiber.New(fiber.Config{
+		ErrorHandler: global.New(global.Deps{}).ErrorHandler(),
+	})
+	app.Get("/protected", m.Auth(), func(c fiber.Ctx) error {
+		return c.SendStatus(fiber.StatusOK)
 	})
 
 	req := httptest.NewRequest(http.MethodGet, "/protected", nil)
 	req.Header.Set("Authorization", "Bearer some-token")
-	w := httptest.NewRecorder()
-	router.ServeHTTP(w, req)
+	resp, err := app.Test(req, fiber.TestConfig{Timeout: 0})
+	require.NoError(t, err)
 
-	assert.Equal(t, http.StatusInternalServerError, w.Code)
+	assert.Equal(t, fiber.StatusInternalServerError, resp.StatusCode)
 }
 
 // TestCan_Unauthenticated 验证无认证身份访问受保护资源时返回 401。
 func TestCan_Unauthenticated(t *testing.T) {
 	m, _, _, _, _ := setupAuthEnv()
 
-	router := gin.New()
-	router.Use(global.New(global.Deps{}).ErrorHandler())
-	router.GET("/users", m.Can("users", "read"), func(c *gin.Context) {
-		c.Status(http.StatusOK)
+	app := fiber.New(fiber.Config{
+		ErrorHandler: global.New(global.Deps{}).ErrorHandler(),
+	})
+	app.Get("/users", m.Can("users", "read"), func(c fiber.Ctx) error {
+		return c.SendStatus(fiber.StatusOK)
 	})
 
 	req := httptest.NewRequest(http.MethodGet, "/users", nil)
-	w := httptest.NewRecorder()
-	router.ServeHTTP(w, req)
+	resp, err := app.Test(req, fiber.TestConfig{Timeout: 0})
+	require.NoError(t, err)
 
-	assert.Equal(t, http.StatusUnauthorized, w.Code)
+	assert.Equal(t, fiber.StatusUnauthorized, resp.StatusCode)
+	bodyBytes, err := io.ReadAll(resp.Body)
+	require.NoError(t, err)
 	var errResp errs.Response
-	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &errResp))
+	require.NoError(t, json.Unmarshal(bodyBytes, &errResp))
 	assert.Equal(t, string(errs.CodeAuthTokenInvalid), errResp.Code)
 }
 
@@ -420,62 +435,70 @@ func TestCan_EnforcerNotConfigured(t *testing.T) {
 		Authz: nil,
 	})
 
-	router := gin.New()
-	router.Use(global.New(global.Deps{}).ErrorHandler())
-	router.GET("/users", func(c *gin.Context) {
-		ctx := authentication.With(c.Request.Context(), authentication.Identity{
+	app := fiber.New(fiber.Config{
+		ErrorHandler: global.New(global.Deps{}).ErrorHandler(),
+	})
+	app.Get("/users", func(c fiber.Ctx) error {
+		ctx := authentication.With(c.Context(), authentication.Identity{
 			UserID: "usr_admin_1",
 			Role:   "admin",
 		})
-		c.Request = c.Request.WithContext(ctx)
-		c.Next()
-	}, m.Can("users", "read"), func(c *gin.Context) {
-		c.Status(http.StatusOK)
+		c.SetContext(ctx)
+		return c.Next()
+	}, m.Can("users", "read"), func(c fiber.Ctx) error {
+		return c.SendStatus(fiber.StatusOK)
 	})
 
 	req := httptest.NewRequest(http.MethodGet, "/users", nil)
-	w := httptest.NewRecorder()
-	router.ServeHTTP(w, req)
+	resp, err := app.Test(req, fiber.TestConfig{Timeout: 0})
+	require.NoError(t, err)
 
-	assert.Equal(t, http.StatusInternalServerError, w.Code)
+	assert.Equal(t, fiber.StatusInternalServerError, resp.StatusCode)
 }
 
 // TestCan_RoleBasedAccess 验证基于 Casbin 角色策略的放行与拒绝。
 func TestCan_RoleBasedAccess(t *testing.T) {
 	m, _, _, _, _ := setupAuthEnv()
 
-	router := gin.New()
-	router.Use(global.New(global.Deps{}).ErrorHandler())
-	router.GET("/users", m.Can("users", "read"), func(c *gin.Context) {
-		c.Status(http.StatusOK)
+	app := fiber.New(fiber.Config{
+		ErrorHandler: global.New(global.Deps{}).ErrorHandler(),
+	})
+	app.Use(func(c fiber.Ctx) error {
+		if role := c.Get("X-Test-Role"); role != "" {
+			ctx := authentication.With(c.Context(), authentication.Identity{
+				UserID: c.Get("X-Test-User"),
+				Role:   role,
+			})
+			c.SetContext(ctx)
+		}
+		return c.Next()
+	})
+	app.Get("/users", m.Can("users", "read"), func(c fiber.Ctx) error {
+		return c.SendStatus(fiber.StatusOK)
 	})
 
 	// 1. 普通用户角色无权读取 users 资源 -> 403 Forbidden
 	req := httptest.NewRequest(http.MethodGet, "/users", nil)
-	ctx := authentication.With(req.Context(), authentication.Identity{
-		UserID: "usr_user_1",
-		Role:   string(models.RoleUser),
-	})
-	req = req.WithContext(ctx)
-	w := httptest.NewRecorder()
-	router.ServeHTTP(w, req)
+	req.Header.Set("X-Test-User", "usr_user_1")
+	req.Header.Set("X-Test-Role", string(models.RoleUser))
+	resp, err := app.Test(req, fiber.TestConfig{Timeout: 0})
+	require.NoError(t, err)
 
-	assert.Equal(t, http.StatusForbidden, w.Code)
+	assert.Equal(t, fiber.StatusForbidden, resp.StatusCode)
+	bodyBytes, err := io.ReadAll(resp.Body)
+	require.NoError(t, err)
 	var errResp errs.Response
-	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &errResp))
+	require.NoError(t, json.Unmarshal(bodyBytes, &errResp))
 	assert.Equal(t, string(errs.CodeForbidden), errResp.Code)
 
 	// 2. 管理员角色有权读取 users 资源 -> 200 OK
 	req = httptest.NewRequest(http.MethodGet, "/users", nil)
-	ctx = authentication.With(req.Context(), authentication.Identity{
-		UserID: "usr_admin_1",
-		Role:   string(models.RoleAdmin),
-	})
-	req = req.WithContext(ctx)
-	w = httptest.NewRecorder()
-	router.ServeHTTP(w, req)
+	req.Header.Set("X-Test-User", "usr_admin_1")
+	req.Header.Set("X-Test-Role", string(models.RoleAdmin))
+	resp, err = app.Test(req, fiber.TestConfig{Timeout: 0})
+	require.NoError(t, err)
 
-	assert.Equal(t, http.StatusOK, w.Code)
+	assert.Equal(t, fiber.StatusOK, resp.StatusCode)
 }
 
 // TestAuth_MultiGuardFallback 验证 Laravel 风格多守卫回退匹配机制。
@@ -492,48 +515,58 @@ func TestAuth_MultiGuardFallback(t *testing.T) {
 	clientSess, err := clientGuard.Login(context.Background(), repo.users["usr_user_1"])
 	require.NoError(t, err)
 
-	router := gin.New()
-	router.Use(global.New(global.Deps{}).ErrorHandler())
+	app := fiber.New(fiber.Config{
+		ErrorHandler: global.New(global.Deps{}).ErrorHandler(),
+	})
 	// 声明优先匹配 admin 守卫，回退至 client 守卫
-	router.GET("/hybrid", m.Auth("admin", "client"), func(c *gin.Context) {
-		id, ok := authentication.FromContext(c.Request.Context())
+	app.Get("/hybrid", m.Auth("admin", "client"), func(c fiber.Ctx) error {
+		id, ok := authentication.FromContext(c.Context())
 		if !ok {
-			c.Status(http.StatusUnauthorized)
-			return
+			return c.SendStatus(fiber.StatusUnauthorized)
 		}
-		c.JSON(http.StatusOK, gin.H{"userId": id.UserID})
+		return c.JSON(fiber.Map{"userId": id.UserID})
 	})
 
 	// 携带 client 令牌请求，admin 守卫校验失败后自动回退至 client 守卫成功认证
 	req := httptest.NewRequest(http.MethodGet, "/hybrid", nil)
 	req.Header.Set("Authorization", "Bearer "+clientSess.Token)
-	w := httptest.NewRecorder()
-	router.ServeHTTP(w, req)
+	resp, err := app.Test(req, fiber.TestConfig{Timeout: 0})
+	require.NoError(t, err)
 
-	require.Equal(t, http.StatusOK, w.Code)
-	var resp map[string]string
-	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
-	assert.Equal(t, "usr_user_1", resp["userId"])
+	require.Equal(t, fiber.StatusOK, resp.StatusCode)
+	bodyBytes, err := io.ReadAll(resp.Body)
+	require.NoError(t, err)
+	var res map[string]string
+	require.NoError(t, json.Unmarshal(bodyBytes, &res))
+	assert.Equal(t, "usr_user_1", res["userId"])
 }
 
 // TestCan_Permission 验证 Laravel 风格 m.Can 简写细粒度权限校验。
 func TestCan_Permission(t *testing.T) {
 	m, _, _, _, _ := setupAuthEnv()
 
-	router := gin.New()
-	router.Use(global.New(global.Deps{}).ErrorHandler())
-	router.GET("/users", m.Can("users", "read"), func(c *gin.Context) {
-		c.Status(http.StatusOK)
+	app := fiber.New(fiber.Config{
+		ErrorHandler: global.New(global.Deps{}).ErrorHandler(),
+	})
+	app.Use(func(c fiber.Ctx) error {
+		if role := c.Get("X-Test-Role"); role != "" {
+			ctx := authentication.With(c.Context(), authentication.Identity{
+				UserID: c.Get("X-Test-User"),
+				Role:   role,
+			})
+			c.SetContext(ctx)
+		}
+		return c.Next()
+	})
+	app.Get("/users", m.Can("users", "read"), func(c fiber.Ctx) error {
+		return c.SendStatus(fiber.StatusOK)
 	})
 
 	req := httptest.NewRequest(http.MethodGet, "/users", nil)
-	ctx := authentication.With(req.Context(), authentication.Identity{
-		UserID: "usr_admin_1",
-		Role:   string(models.RoleAdmin),
-	})
-	req = req.WithContext(ctx)
-	w := httptest.NewRecorder()
-	router.ServeHTTP(w, req)
+	req.Header.Set("X-Test-User", "usr_admin_1")
+	req.Header.Set("X-Test-Role", string(models.RoleAdmin))
+	resp, err := app.Test(req, fiber.TestConfig{Timeout: 0})
+	require.NoError(t, err)
 
-	assert.Equal(t, http.StatusOK, w.Code)
+	assert.Equal(t, fiber.StatusOK, resp.StatusCode)
 }

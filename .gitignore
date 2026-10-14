@@ -1,5 +1,5 @@
 # ==========================================
-# Go bgin Project - .gitignore
+# Go bfiber Project - .gitignore
 # ==========================================
 
 # ------------------------------------------
@@ -16,8 +16,8 @@ debug
 debug.test
 __debug_bin
 /bin/
-/bgin
-/bgin-cli
+/bfiber
+/bfiber-cli
 
 # ------------------------------------------
 # OS Generated Files

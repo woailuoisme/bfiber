@@ -10,12 +10,12 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"bgin/internal/config"
-	"bgin/internal/database/models"
-	"bgin/internal/platform/authentication"
-	"bgin/internal/platform/cache"
-	"bgin/internal/platform/errs"
-	"bgin/internal/shared/user"
+	"bfiber/internal/config"
+	"bfiber/internal/database/models"
+	"bfiber/internal/platform/authentication"
+	"bfiber/internal/platform/cache"
+	"bfiber/internal/platform/errs"
+	"bfiber/internal/shared/user"
 )
 
 const testSecret = "0123456789abcdef0123456789abcdef"
@@ -56,7 +56,7 @@ func (s *mockBlacklistStore) Exists(_ context.Context, key string) (bool, error)
 func newTestTokenIssuer(accessTTL time.Duration) *authentication.TokenIssuer {
 	return authentication.NewTokenIssuer(config.JWTConfig{
 		Secret:     testSecret,
-		Issuer:     "bgin-test",
+		Issuer:     "bfiber-test",
 		AccessTTL:  accessTTL,
 		RefreshTTL: 24 * time.Hour,
 	}, nil)
@@ -65,7 +65,7 @@ func newTestTokenIssuer(accessTTL time.Duration) *authentication.TokenIssuer {
 func newTestTokenIssuerWithBlacklist(accessTTL time.Duration, store authentication.BlacklistStore) *authentication.TokenIssuer {
 	return authentication.NewTokenIssuer(config.JWTConfig{
 		Secret:     testSecret,
-		Issuer:     "bgin-test",
+		Issuer:     "bfiber-test",
 		AccessTTL:  accessTTL,
 		RefreshTTL: 24 * time.Hour,
 	}, store)

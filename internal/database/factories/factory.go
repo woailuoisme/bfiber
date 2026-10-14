@@ -10,7 +10,7 @@ import (
 	"github.com/brianvoe/gofakeit/v7"
 	"github.com/uptrace/bun"
 
-	"bgin/internal/database"
+	"bfiber/internal/database"
 )
 
 // ErrDatabaseRequired 在缺少数据库连接且调用持久化方法时返回。

@@ -7,10 +7,10 @@ import (
 	"github.com/samber/oops"
 	"go.uber.org/zap"
 
-	"bgin/internal/platform/errs"
-	"bgin/internal/platform/logger"
-	"bgin/internal/platform/mailer"
-	"bgin/internal/platform/queue"
+	"bfiber/internal/platform/errs"
+	"bfiber/internal/platform/logger"
+	"bfiber/internal/platform/mailer"
+	"bfiber/internal/platform/queue"
 )
 
 // TaskSendWelcomeEmail 声明发送欢迎邮件的 Asynq 任务唯一标识符。
@@ -65,7 +65,7 @@ func (j *WelcomeEmailJob) Handle(ctx context.Context) error {
 
 	htmlBody, err := mailer.RenderTemplate("welcome", map[string]any{
 		"Name":    j.Name,
-		"AppName": "bgin",
+		"AppName": "bfiber",
 		"Button": map[string]any{
 			"Text":  "Get Started",
 			"Url":   "#",
@@ -78,7 +78,7 @@ func (j *WelcomeEmailJob) Handle(ctx context.Context) error {
 
 	msg := mailer.Message{
 		To:      j.Email,
-		Subject: "Welcome to bgin",
+		Subject: "Welcome to bfiber",
 		Body:    htmlBody,
 		IsHTML:  true,
 	}

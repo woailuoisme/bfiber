@@ -5,8 +5,8 @@ import (
 	"strings"
 	"time"
 
-	"bgin/internal/platform/notification"
-	"bgin/internal/platform/notification/contract"
+	"bfiber/internal/platform/notification"
+	"bfiber/internal/platform/notification/contract"
 )
 
 const defaultAuthOTPExpiry = 10 * time.Minute

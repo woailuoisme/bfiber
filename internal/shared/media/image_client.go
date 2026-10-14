@@ -26,8 +26,8 @@ import (
 	"github.com/samber/oops"
 	_ "golang.org/x/image/webp"
 
-	"bgin/internal/config"
-	"bgin/internal/platform/errs"
+	"bfiber/internal/config"
+	"bfiber/internal/platform/errs"
 )
 
 // Format 指定输出图像格式。
@@ -232,7 +232,7 @@ func NewWithStorage(imgCfg config.ImgproxyConfig, storageCfg config.StorageConfi
 
 	restyClient := resty.New().
 		SetTimeout(2*time.Second).
-		SetHeader("User-Agent", "bgin-imgproxy-client")
+		SetHeader("User-Agent", "bfiber-imgproxy-client")
 
 	return &client{
 		baseURL:    trimmedURL,

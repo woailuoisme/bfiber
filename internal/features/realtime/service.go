@@ -10,10 +10,10 @@ import (
 
 	"github.com/uptrace/bun"
 
-	"bgin/internal/config"
-	"bgin/internal/database/models"
-	"bgin/internal/platform/errs"
-	platformRealtime "bgin/internal/platform/realtime"
+	"bfiber/internal/config"
+	"bfiber/internal/database/models"
+	"bfiber/internal/platform/errs"
+	platformRealtime "bfiber/internal/platform/realtime"
 )
 
 // Deps 汇总实时通信服务的装配依赖。

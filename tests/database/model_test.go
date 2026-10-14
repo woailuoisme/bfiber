@@ -13,10 +13,10 @@ import (
 	"github.com/uptrace/bun/dialect/pgdialect"
 	"github.com/uptrace/bun/schema"
 
-	"bgin/internal/database"
-	"bgin/internal/database/models"
-	"bgin/internal/shared/enums"
-	"bgin/tests/testutil"
+	"bfiber/internal/database"
+	"bfiber/internal/database/models"
+	"bfiber/internal/shared/enums"
+	"bfiber/tests/testutil"
 )
 
 // TestIsBanned 校验封禁判定把已过期的封禁视为解除。

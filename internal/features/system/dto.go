@@ -1,6 +1,6 @@
 package system
 
-import "bgin/internal/platform/ready"
+import "bfiber/internal/platform/ready"
 
 const (
 	// StatusOK 是存活探针的健康状态值。

@@ -8,7 +8,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/uptrace/bun"
 
-	"bgin/internal/database/seeders"
+	"bfiber/internal/database/seeders"
 )
 
 type mockCounterSeeder struct {

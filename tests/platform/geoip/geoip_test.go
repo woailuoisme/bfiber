@@ -9,8 +9,8 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"bgin/internal/config"
-	"bgin/internal/platform/geoip"
+	"bfiber/internal/config"
+	"bfiber/internal/platform/geoip"
 )
 
 func TestNoopService(t *testing.T) {

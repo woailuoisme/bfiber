@@ -10,9 +10,9 @@ import (
 	"github.com/brianvoe/gofakeit/v7"
 	"github.com/uptrace/bun"
 
-	"bgin/internal/database"
-	"bgin/internal/database/models"
-	"bgin/internal/platform/hasher"
+	"bfiber/internal/database"
+	"bfiber/internal/database/models"
+	"bfiber/internal/platform/hasher"
 )
 
 // UserFactory 是面向 models.User 的领域工厂，提供开箱即用的假数据定义与状态链。

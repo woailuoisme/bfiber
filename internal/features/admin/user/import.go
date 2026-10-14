@@ -7,10 +7,10 @@ import (
 
 	"github.com/samber/oops"
 
-	"bgin/internal/database/models"
-	"bgin/internal/platform/errs"
-	"bgin/internal/platform/excel"
-	"bgin/internal/shared/enums"
+	"bfiber/internal/database/models"
+	"bfiber/internal/platform/errs"
+	"bfiber/internal/platform/excel"
+	"bfiber/internal/shared/enums"
 )
 
 // UsersImport 封装用户数据批量导入的解析与验证逻辑。

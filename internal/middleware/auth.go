@@ -5,50 +5,48 @@ import (
 	"errors"
 	"strings"
 
-	"github.com/gin-gonic/gin"
+	"github.com/gofiber/fiber/v3"
 
-	"bgin/internal/platform/authentication"
-	"bgin/internal/platform/errs"
-	platformsentry "bgin/internal/platform/sentry"
+	"bfiber/internal/platform/authentication"
+	"bfiber/internal/platform/errs"
+	platformsentry "bfiber/internal/platform/sentry"
 )
 
 // Auth 【路由/路由组中间件】仿照 Laravel auth 中间件设计，校验 Bearer 访问令牌并注入认证身份载荷。
 // 支持未指定（使用默认守卫）、单个守卫（如 "client"、"admin"）以及多守卫顺序回退（如 mw.Auth("admin", "client") 或 mw.Auth("admin,client")）。
-func (m *Middleware) Auth(guardNames ...string) gin.HandlerFunc {
+func (m *Middleware) Auth(guardNames ...string) fiber.Handler {
 	guards := parseGuards(guardNames)
 
-	return func(c *gin.Context) {
+	return func(c fiber.Ctx) error {
 		raw, err := bearerToken(c)
 		if err != nil {
-			abortWithError(c, err)
-			return
+			return err
 		}
 
 		var reqCtx context.Context
 		if m.authManager != nil {
-			reqCtx, err = m.authenticateWithManager(c.Request.Context(), raw, guards)
+			reqCtx, err = m.authenticateWithManager(c.Context(), raw, guards)
 		} else {
-			reqCtx, err = m.authenticateFallback(c.Request.Context(), raw, guards)
+			reqCtx, err = m.authenticateFallback(c.Context(), raw, guards)
 		}
 
 		if err != nil {
-			abortWithError(c, err)
-			return
+			return err
 		}
 
 		if m.authz != nil {
 			reqCtx = authentication.WithGate(reqCtx, m.authz)
 		}
-		c.Request = c.Request.WithContext(reqCtx)
+		c.SetContext(reqCtx)
 
 		enrichSentryUser(c, reqCtx)
 
-		c.Next()
+		return c.Next()
 	}
 }
 
 // enrichSentryUser 将已认证用户身份与角色元信息同步绑定至 Sentry / GlitchTip 请求级作用域。
-func enrichSentryUser(c *gin.Context, reqCtx context.Context) {
+func enrichSentryUser(c fiber.Ctx, reqCtx context.Context) {
 	id, ok := authentication.FromContext(reqCtx)
 	if !ok {
 		return
@@ -61,7 +59,7 @@ func enrichSentryUser(c *gin.Context, reqCtx context.Context) {
 		}
 	}
 
-	platformsentry.SetUser(reqCtx, id.UserID, email, id.Role, c.ClientIP())
+	platformsentry.SetUser(reqCtx, id.UserID, email, id.Role, c.IP())
 	platformsentry.SetTag(reqCtx, "role", id.Role)
 }
 
@@ -113,23 +111,20 @@ func (m *Middleware) authenticateFallback(ctx context.Context, raw string, guard
 }
 
 // Can 【路由级中间件】仿照 Laravel can 中间件设计，基于令牌角色执行 Casbin RBAC 细粒度权限校验。
-func (m *Middleware) Can(resource, action string) gin.HandlerFunc {
-	return func(c *gin.Context) {
-		if _, ok := authentication.FromContext(c.Request.Context()); !ok {
-			abortWithError(c, errs.Unauthorized(errs.CodeAuthTokenInvalid, "Authentication is required"))
-			return
+func (m *Middleware) Can(resource, action string) fiber.Handler {
+	return func(c fiber.Ctx) error {
+		if _, ok := authentication.FromContext(c.Context()); !ok {
+			return errs.Unauthorized(errs.CodeAuthTokenInvalid, "Authentication is required")
 		}
 
 		if m.authz == nil {
-			abortWithError(c, errs.Internal(errors.New("middleware: authz enforcer not configured")))
-			return
+			return errs.Internal(errors.New("middleware: authz enforcer not configured"))
 		}
 
-		if !m.authz.Can(c.Request.Context(), resource, action) {
-			abortWithError(c, errs.Forbidden("You are not allowed to perform this action"))
-			return
+		if !m.authz.Can(c.Context(), resource, action) {
+			return errs.Forbidden("You are not allowed to perform this action")
 		}
-		c.Next()
+		return c.Next()
 	}
 }
 
@@ -148,8 +143,8 @@ func parseGuards(guardNames []string) []string {
 }
 
 // bearerToken 从 Authorization 头提取 Bearer 令牌。
-func bearerToken(c *gin.Context) (string, error) {
-	header := strings.TrimSpace(c.GetHeader("Authorization"))
+func bearerToken(c fiber.Ctx) (string, error) {
+	header := strings.TrimSpace(c.Get("Authorization"))
 	if header == "" {
 		return "", errs.Unauthorized(errs.CodeAuthTokenInvalid, "Authentication is required")
 	}

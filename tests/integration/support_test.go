@@ -5,7 +5,6 @@
 package integration_test
 
 import (
-	"bytes"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -16,16 +15,14 @@ import (
 	"testing"
 	"time"
 
-	"github.com/gin-gonic/gin"
+	"github.com/gofiber/fiber/v3"
 	"github.com/stretchr/testify/require"
 	"github.com/uptrace/bun"
 
-	"bgin/internal/bootstrap"
-	"bgin/internal/config"
-	"bgin/internal/database"
+	"bfiber/internal/bootstrap"
+	"bfiber/internal/config"
+	"bfiber/internal/database"
 )
-
-func init() { gin.SetMode(gin.TestMode) }
 
 // reusedApp 让同一进程内的多个用例共用一套装配好的依赖，避免反复建连接池。
 var reusedApp *bootstrap.Application
@@ -38,7 +35,7 @@ var appStorageRoot string
 
 // TestMain 准备进程级共享资源并在退出前回收。
 func TestMain(m *testing.M) {
-	dir, err := os.MkdirTemp("", "bgin-integration-storage-")
+	dir, err := os.MkdirTemp("", "bfiber-integration-storage-")
 	if err != nil {
 		_, _ = fmt.Fprintf(os.Stderr, "failed to create integration storage root: %v\n", err)
 		os.Exit(1)
@@ -53,7 +50,7 @@ func TestMain(m *testing.M) {
 
 // newEngine 装配真实应用并返回路由引擎。
 // TEST_DATABASE_URL 存在时指向测试库，否则沿用 .env 里的库。
-func newEngine(t *testing.T) *gin.Engine {
+func newEngine(t *testing.T) *fiber.App {
 	t.Helper()
 
 	if dsn := os.Getenv("TEST_DATABASE_URL"); dsn != "" {
@@ -95,7 +92,7 @@ func openTestDB(t *testing.T) *bun.DB {
 	cfg.Database.MaxOpenConns = 4
 	cfg.Database.MaxIdleConns = 4
 
-	db, err := database.Open(t.Context(), cfg.Database, "bgin-tests")
+	db, err := database.Open(t.Context(), cfg.Database, "bfiber-tests")
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = db.Close() })
 
@@ -111,7 +108,7 @@ type response struct {
 }
 
 // call 用真实引擎发起一次请求。token 为空时不带 Authorization 头。
-func call(t *testing.T, engine *gin.Engine, method, path, body, token string) response {
+func call(t *testing.T, engine *fiber.App, method, path, body, token string) response {
 	t.Helper()
 
 	var reader io.Reader
@@ -126,23 +123,27 @@ func call(t *testing.T, engine *gin.Engine, method, path, body, token string) re
 		request.Header.Set("Authorization", "Bearer "+token)
 	}
 
-	recorder := httptest.NewRecorder()
-	engine.ServeHTTP(recorder, request)
+	resp, err := engine.Test(request, fiber.TestConfig{Timeout: 0})
+	require.NoError(t, err)
+	defer func() { _ = resp.Body.Close() }()
+
+	bodyBytes, err := io.ReadAll(resp.Body)
+	require.NoError(t, err)
 
 	result := response{
-		Status: recorder.Code,
-		Header: recorder.Header(),
-		Raw:    recorder.Body.String(),
+		Status: resp.StatusCode,
+		Header: resp.Header,
+		Raw:    string(bodyBytes),
 	}
-	if recorder.Body.Len() > 0 {
-		_ = json.Unmarshal(recorder.Body.Bytes(), &result.Body)
+	if len(bodyBytes) > 0 {
+		_ = json.Unmarshal(bodyBytes, &result.Body)
 	}
 	return result
 }
 
 // callRawAuth 用原始 Authorization 头发起请求，用于覆盖"缺少 Bearer 前缀"这类畸形头分支。
 // call 会自动补上 Bearer 前缀，无法表达该场景。
-func callRawAuth(t *testing.T, engine *gin.Engine, method, path, authorization string) response {
+func callRawAuth(t *testing.T, engine *fiber.App, method, path, authorization string) response {
 	t.Helper()
 
 	request := httptest.NewRequest(method, path, nil)
@@ -150,28 +151,32 @@ func callRawAuth(t *testing.T, engine *gin.Engine, method, path, authorization s
 	request.Header.Set("Accept", "application/json")
 	request.Header.Set("Authorization", authorization)
 
-	recorder := httptest.NewRecorder()
-	engine.ServeHTTP(recorder, request)
+	resp, err := engine.Test(request, fiber.TestConfig{Timeout: 0})
+	require.NoError(t, err)
+	defer func() { _ = resp.Body.Close() }()
+
+	bodyBytes, err := io.ReadAll(resp.Body)
+	require.NoError(t, err)
 
 	result := response{
-		Status: recorder.Code,
-		Header: recorder.Header(),
-		Raw:    recorder.Body.String(),
+		Status: resp.StatusCode,
+		Header: resp.Header,
+		Raw:    string(bodyBytes),
 	}
-	if recorder.Body.Len() > 0 {
-		_ = json.Unmarshal(recorder.Body.Bytes(), &result.Body)
+	if len(bodyBytes) > 0 {
+		_ = json.Unmarshal(bodyBytes, &result.Body)
 	}
 	return result
 }
 
 // callJSON 与 call 相同，但接受任意结构体作为请求体。
-func callJSON(t *testing.T, engine *gin.Engine, method, path string, payload any, token string) response {
+func callJSON(t *testing.T, engine *fiber.App, method, path string, payload any, token string) response {
 	t.Helper()
 
 	encoded, err := json.Marshal(payload)
 	require.NoError(t, err)
 
-	return call(t, engine, method, path, bytes.NewBuffer(encoded).String(), token)
+	return call(t, engine, method, path, string(encoded), token)
 }
 
 // str 从响应体里取字符串字段，缺失时返回空串。
@@ -226,7 +231,7 @@ func errorMessages(body map[string]any, field string) []string {
 
 // uniqueEmail 生成不会与既有数据冲突的邮箱。
 func uniqueEmail() string {
-	return fmt.Sprintf("it+%d@bgin.local", time.Now().UnixNano())
+	return fmt.Sprintf("it+%d@bfiber.local", time.Now().UnixNano())
 }
 
 // uniqueUsername 生成符合字符集规范的唯一用户名。
@@ -235,7 +240,7 @@ func uniqueUsername() string {
 }
 
 // signUp 注册一个全新账号并返回令牌与标识。
-func signUp(t *testing.T, engine *gin.Engine) (token, refreshToken, userID, email string) {
+func signUp(t *testing.T, engine *fiber.App) (token, refreshToken, userID, email string) {
 	t.Helper()
 
 	email = uniqueEmail()

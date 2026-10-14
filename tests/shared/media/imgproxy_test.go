@@ -9,8 +9,8 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"bgin/internal/config"
-	"bgin/internal/shared/media"
+	"bfiber/internal/config"
+	"bfiber/internal/shared/media"
 )
 
 func TestImgproxyClient_Signature(t *testing.T) {

@@ -8,13 +8,13 @@ import (
 	"github.com/samber/lo"
 	"github.com/uptrace/bun"
 
-	"bgin/internal/database/models"
-	"bgin/internal/platform/errs"
-	"bgin/internal/platform/excel"
-	"bgin/internal/platform/response"
-	"bgin/internal/platform/validator"
-	"bgin/internal/shared/enums"
-	"bgin/internal/shared/user"
+	"bfiber/internal/database/models"
+	"bfiber/internal/platform/errs"
+	"bfiber/internal/platform/excel"
+	"bfiber/internal/platform/response"
+	"bfiber/internal/platform/validator"
+	"bfiber/internal/shared/enums"
+	"bfiber/internal/shared/user"
 )
 
 // passwordHasher 声明用户管理服务所需的口令安全哈希能力（遵循 Uber Go Guide：接口由消费方定义）。

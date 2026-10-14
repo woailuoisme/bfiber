@@ -13,8 +13,8 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/uptrace/bun"
 
-	"bgin/internal/database"
-	"bgin/internal/database/models"
+	"bfiber/internal/database"
+	"bfiber/internal/database/models"
 )
 
 // TestActiveRecord_Execution_LookupsAndFinders 测试各类查找器与存在性判断在实际 DB 下的执行。

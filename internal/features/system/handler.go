@@ -4,11 +4,11 @@ import (
 	"context"
 	"time"
 
-	"github.com/gin-gonic/gin"
+	"github.com/gofiber/fiber/v3"
 	"go.uber.org/zap"
 
-	"bgin/internal/platform/ready"
-	"bgin/internal/platform/response"
+	"bfiber/internal/platform/ready"
+	"bfiber/internal/platform/response"
 )
 
 // probeTimeout 是就绪探针调度的总超时时限。
@@ -29,18 +29,18 @@ func NewHandler(service *Service, logger *zap.Logger) *Handler {
 }
 
 // Index 处理 GET / 根路径请求。
-func (h *Handler) Index(c *gin.Context) {
-	h.Liveness(c)
+func (h *Handler) Index(c fiber.Ctx) error {
+	return h.Liveness(c)
 }
 
 // Liveness 处理 GET /livez 存活探针请求。
-func (h *Handler) Liveness(c *gin.Context) {
-	response.OK(c, HealthResource{Status: StatusOK})
+func (h *Handler) Liveness(c fiber.Ctx) error {
+	return response.OK(c, HealthResource{Status: StatusOK})
 }
 
 // Readiness 处理 GET /readyz 就绪探针请求：并发探测各依赖，关键项失败返回 503，非关键项失败返回 200 degraded。
-func (h *Handler) Readiness(c *gin.Context) {
-	ctx, cancel := context.WithTimeout(c.Request.Context(), probeTimeout)
+func (h *Handler) Readiness(c fiber.Ctx) error {
+	ctx, cancel := context.WithTimeout(c.Context(), probeTimeout)
 	defer cancel()
 
 	result, errs := h.service.Check(ctx)
@@ -49,8 +49,7 @@ func (h *Handler) Readiness(c *gin.Context) {
 	}
 
 	if result.Status == ready.StatusNotReady {
-		c.JSON(result.StatusCode(), result)
-		return
+		return c.Status(result.StatusCode()).JSON(result)
 	}
-	response.OK(c, result)
+	return response.OK(c, result)
 }

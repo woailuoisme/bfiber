@@ -10,11 +10,11 @@ import (
 	"github.com/uptrace/bun"
 	"go.uber.org/zap"
 
-	"bgin/internal/config"
-	"bgin/internal/database/models"
-	"bgin/internal/platform/hasher"
-	"bgin/internal/platform/logger"
-	"bgin/internal/platform/validator"
+	"bfiber/internal/config"
+	"bfiber/internal/database/models"
+	"bfiber/internal/platform/hasher"
+	"bfiber/internal/platform/logger"
+	"bfiber/internal/platform/validator"
 )
 
 func init() {

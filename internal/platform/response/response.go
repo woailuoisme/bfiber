@@ -8,11 +8,10 @@ import (
 	"cmp"
 	"fmt"
 	"io"
-	"net/http"
 	"net/url"
 	"strings"
 
-	"github.com/gin-gonic/gin"
+	"github.com/gofiber/fiber/v3"
 	"github.com/samber/lo"
 )
 
@@ -40,47 +39,47 @@ func NewMeta(page, pageSize, total int) Meta {
 }
 
 // OK 返回 200 与业务对象本身，不添加任何外层包装。
-func OK[T any](c *gin.Context, data T) {
-	c.JSON(http.StatusOK, data)
+func OK[T any](c fiber.Ctx, data T) error {
+	return c.Status(fiber.StatusOK).JSON(data)
 }
 
 // Created 返回 201 与新建对象。
-func Created[T any](c *gin.Context, data T) {
-	c.JSON(http.StatusCreated, data)
+func Created[T any](c fiber.Ctx, data T) error {
+	return c.Status(fiber.StatusCreated).JSON(data)
 }
 
 // NoContent 返回 204，响应体为 0 字节。
-func NoContent(c *gin.Context) {
-	c.Status(http.StatusNoContent)
+func NoContent(c fiber.Ctx) error {
+	return c.SendStatus(fiber.StatusNoContent)
 }
 
 // Paginated 返回传统偏移分页信封，空列表同样保持结构完整。
-func Paginated[T any](c *gin.Context, items []T, meta Meta) {
+func Paginated[T any](c fiber.Ctx, items []T, meta Meta) error {
 	// 为保持 RESTful JSON 契约一致性，将 nil 切片强制初始化为空切片 []T{}，避免在 JSON 序列化中产出 null。
 	if items == nil {
 		items = []T{}
 	}
-	c.JSON(http.StatusOK, Page[T]{Items: items, Meta: meta})
+	return c.Status(fiber.StatusOK).JSON(Page[T]{Items: items, Meta: meta})
 }
 
 // Collection 返回无信封的数组集合，确保 nil 切片恒定序列化为 [] 而非 null。
-func Collection[T any](c *gin.Context, items []T) {
+func Collection[T any](c fiber.Ctx, items []T) error {
 	// 为保持 RESTful JSON 契约一致性，将 nil 切片强制初始化为空切片 []T{}，避免在 JSON 序列化中产出 null。
 	if items == nil {
 		items = []T{}
 	}
-	c.JSON(http.StatusOK, items)
+	return c.Status(fiber.StatusOK).JSON(items)
 }
 
 // Attachment 将已知长度的流作为下载附件写回客户端，设置标准 Content-Disposition 并处理 RFC 5987 文件名。
-// 长度未知的流式产出（如边写边生成的报表）请直接设置响应头后写 c.Writer。
-func Attachment(c *gin.Context, filename string, r io.Reader, size int64, contentType ...string) {
-	writeStream(c, dispositionAttachment, filename, r, size, contentType...)
+// 长度未知的流式产出（如边写边生成的报表）请直接设置响应头后写 c.Response().BodyWriter()。
+func Attachment(c fiber.Ctx, filename string, r io.Reader, size int64, contentType ...string) error {
+	return writeStream(c, dispositionAttachment, filename, r, size, contentType...)
 }
 
 // Inline 将已知长度的流作为内联展示（如 PDF/图片）写回客户端。
-func Inline(c *gin.Context, filename string, r io.Reader, size int64, contentType ...string) {
-	writeStream(c, dispositionInline, filename, r, size, contentType...)
+func Inline(c fiber.Ctx, filename string, r io.Reader, size int64, contentType ...string) error {
+	return writeStream(c, dispositionInline, filename, r, size, contentType...)
 }
 
 // Content-Disposition 的两种处置方式。
@@ -90,11 +89,16 @@ const (
 )
 
 // writeStream 统一设置 RFC 5987 文件名与内容类型后写出流，attachment / inline 仅处置方式不同。
-func writeStream(c *gin.Context, disposition, filename string, r io.Reader, size int64, contentType ...string) {
+func writeStream(c fiber.Ctx, disposition, filename string, r io.Reader, size int64, contentType ...string) error {
 	ct := cmp.Or(lo.FirstOrEmpty(contentType), "application/octet-stream")
-	c.Header("Content-Disposition", fmt.Sprintf("%s; filename=%q; filename*=UTF-8''%s",
+	c.Set("Content-Disposition", fmt.Sprintf("%s; filename=%q; filename*=UTF-8''%s",
 		disposition, asciiFallbackFilename(filename), url.PathEscape(filename)))
-	c.DataFromReader(http.StatusOK, size, ct, r, nil)
+	c.Set("Content-Type", ct)
+	c.Status(fiber.StatusOK)
+	if size > 0 {
+		return c.SendStream(r, int(size))
+	}
+	return c.SendStream(r)
 }
 
 // asciiFallbackFilename 生成 Content-Disposition 的 ASCII 兜底名。

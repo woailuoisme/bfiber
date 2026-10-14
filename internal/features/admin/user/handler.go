@@ -1,9 +1,9 @@
 package admin
 
 import (
-	"github.com/gin-gonic/gin"
+	"github.com/gofiber/fiber/v3"
 
-	"bgin/internal/platform/response"
+	"bfiber/internal/platform/response"
 )
 
 // Handler 是管理端用户 CRUD 的 HTTP 适配层。
@@ -28,19 +28,17 @@ func NewHandler(service *Service) *Handler {
 // @Success      200 {object} UserPageResource "用户分页列表"
 // @x-order      1
 // @Router       /admin/users [get]
-func (h *Handler) ListUsers(c *gin.Context) {
+func (h *Handler) ListUsers(c fiber.Ctx) error {
 	var query ListUsersQueryParams
-	if err := c.ShouldBindQuery(&query); err != nil {
-		_ = c.Error(err)
-		return
+	if err := c.Bind().Query(&query); err != nil {
+		return err
 	}
 
-	items, meta, err := h.service.ListUsers(c.Request.Context(), query)
+	items, meta, err := h.service.ListUsers(c.Context(), query)
 	if err != nil {
-		_ = c.Error(err)
-		return
+		return err
 	}
-	response.Paginated(c, items, meta)
+	return response.Paginated(c, items, meta)
 }
 
 // ExportUsers 处理 GET /v1/admin/users/export。
@@ -55,20 +53,19 @@ func (h *Handler) ListUsers(c *gin.Context) {
 // @Success      200 {file} binary "用户数据 Excel 文件"
 // @x-order      6
 // @Router       /admin/users/export [get]
-func (h *Handler) ExportUsers(c *gin.Context) {
+func (h *Handler) ExportUsers(c fiber.Ctx) error {
 	var query ListUsersQueryParams
-	if err := c.ShouldBindQuery(&query); err != nil {
-		_ = c.Error(err)
-		return
+	if err := c.Bind().Query(&query); err != nil {
+		return err
 	}
 
-	c.Header("Content-Disposition", `attachment; filename="users.xlsx"`)
-	c.Header("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+	c.Set("Content-Disposition", `attachment; filename="users.xlsx"`)
+	c.Set("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
 
-	if err := h.service.ExportUsers(c.Request.Context(), query, c.Writer); err != nil {
-		_ = c.Error(err)
-		return
+	if err := h.service.ExportUsers(c.Context(), query, c); err != nil {
+		return err
 	}
+	return nil
 }
 
 // GetUser 处理 GET /v1/admin/users/:id。
@@ -83,19 +80,17 @@ func (h *Handler) ExportUsers(c *gin.Context) {
 // @Success      200 {object} UserResource "用户完整档案"
 // @x-order      2
 // @Router       /admin/users/{id} [get]
-func (h *Handler) GetUser(c *gin.Context) {
+func (h *Handler) GetUser(c fiber.Ctx) error {
 	var params GetUserPathParams
-	if err := c.ShouldBindUri(&params); err != nil {
-		_ = c.Error(err)
-		return
+	if err := c.Bind().URI(&params); err != nil {
+		return err
 	}
 
-	entity, err := h.service.GetUser(c.Request.Context(), params.ID)
+	entity, err := h.service.GetUser(c.Context(), params.ID)
 	if err != nil {
-		_ = c.Error(err)
-		return
+		return err
 	}
-	response.OK(c, entity)
+	return response.OK(c, entity)
 }
 
 // CreateUser 处理 POST /v1/admin/users。
@@ -110,19 +105,17 @@ func (h *Handler) GetUser(c *gin.Context) {
 // @Success      201 {object} UserResource "新建成功的用户对象"
 // @x-order      3
 // @Router       /admin/users [post]
-func (h *Handler) CreateUser(c *gin.Context) {
+func (h *Handler) CreateUser(c fiber.Ctx) error {
 	var body CreateUserBody
-	if err := c.ShouldBindJSON(&body); err != nil {
-		_ = c.Error(err)
-		return
+	if err := c.Bind().Body(&body); err != nil {
+		return err
 	}
 
-	created, err := h.service.CreateUser(c.Request.Context(), body)
+	created, err := h.service.CreateUser(c.Context(), body)
 	if err != nil {
-		_ = c.Error(err)
-		return
+		return err
 	}
-	response.Created(c, created)
+	return response.Created(c, created)
 }
 
 // UpdateUser 处理 PATCH /v1/admin/users/:id。
@@ -138,25 +131,22 @@ func (h *Handler) CreateUser(c *gin.Context) {
 // @Success      200 {object} UserResource "更新后的用户对象"
 // @x-order      4
 // @Router       /admin/users/{id} [patch]
-func (h *Handler) UpdateUser(c *gin.Context) {
+func (h *Handler) UpdateUser(c fiber.Ctx) error {
 	var params UpdateUserPathParams
-	if err := c.ShouldBindUri(&params); err != nil {
-		_ = c.Error(err)
-		return
+	if err := c.Bind().URI(&params); err != nil {
+		return err
 	}
 
 	var body UpdateUserBody
-	if err := c.ShouldBindJSON(&body); err != nil {
-		_ = c.Error(err)
-		return
+	if err := c.Bind().Body(&body); err != nil {
+		return err
 	}
 
-	updated, err := h.service.UpdateUser(c.Request.Context(), params.ID, body)
+	updated, err := h.service.UpdateUser(c.Context(), params.ID, body)
 	if err != nil {
-		_ = c.Error(err)
-		return
+		return err
 	}
-	response.OK(c, updated)
+	return response.OK(c, updated)
 }
 
 // DeleteUser 处理 DELETE /v1/admin/users/:id，返回 204。
@@ -171,16 +161,14 @@ func (h *Handler) UpdateUser(c *gin.Context) {
 // @Success      204 "删除成功，无响应体"
 // @x-order      5
 // @Router       /admin/users/{id} [delete]
-func (h *Handler) DeleteUser(c *gin.Context) {
+func (h *Handler) DeleteUser(c fiber.Ctx) error {
 	var params DeleteUserPathParams
-	if err := c.ShouldBindUri(&params); err != nil {
-		_ = c.Error(err)
-		return
+	if err := c.Bind().URI(&params); err != nil {
+		return err
 	}
 
-	if err := h.service.DeleteUser(c.Request.Context(), params.ID); err != nil {
-		_ = c.Error(err)
-		return
+	if err := h.service.DeleteUser(c.Context(), params.ID); err != nil {
+		return err
 	}
-	response.NoContent(c)
+	return response.NoContent(c)
 }

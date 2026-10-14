@@ -15,22 +15,22 @@ import (
 	"github.com/uptrace/bun"
 	"go.uber.org/zap"
 
-	"bgin/internal/config"
-	"bgin/internal/database"
-	"bgin/internal/database/models"
-	platformauth "bgin/internal/platform/authentication"
-	"bgin/internal/platform/cache"
-	"bgin/internal/platform/errs"
-	"bgin/internal/platform/eventbus"
-	"bgin/internal/platform/hasher"
-	"bgin/internal/platform/i18n"
-	"bgin/internal/platform/logger"
-	"bgin/internal/platform/mailer"
-	"bgin/internal/platform/notification"
-	"bgin/internal/platform/notification/contract"
-	"bgin/internal/platform/validator"
-	"bgin/internal/shared/events"
-	shareduser "bgin/internal/shared/user"
+	"bfiber/internal/config"
+	"bfiber/internal/database"
+	"bfiber/internal/database/models"
+	platformauth "bfiber/internal/platform/authentication"
+	"bfiber/internal/platform/cache"
+	"bfiber/internal/platform/errs"
+	"bfiber/internal/platform/eventbus"
+	"bfiber/internal/platform/hasher"
+	"bfiber/internal/platform/i18n"
+	"bfiber/internal/platform/logger"
+	"bfiber/internal/platform/mailer"
+	"bfiber/internal/platform/notification"
+	"bfiber/internal/platform/notification/contract"
+	"bfiber/internal/platform/validator"
+	"bfiber/internal/shared/events"
+	shareduser "bfiber/internal/shared/user"
 )
 
 // NotificationSender 定义外发通知的高层抽象契约。
@@ -434,7 +434,7 @@ func (s *Service) translateLookupFailure(ctx context.Context, err error, identif
 
 // dummyPasswordHash 是时序对齐用的固定哈希载荷，进程内只生成一次。
 var dummyPasswordHash = sync.OnceValue(func() string {
-	encoded, err := hasher.New().Make("bgin-login-timing-equaliser")
+	encoded, err := hasher.New().Make("bfiber-login-timing-equaliser")
 	if err != nil {
 		return ""
 	}
@@ -510,8 +510,8 @@ func (s *Service) resolveResetTarget(ctx context.Context, req ResetPasswordReque
 	case req.OTP != nil && strings.TrimSpace(*req.OTP) != "":
 		credential = strings.TrimSpace(*req.OTP)
 	default:
-		return nil, errs.ValidationKeys(map[string][]errs.MessageKey{
-			"token": {{Key: "token_or_code_required"}},
+		return nil, errs.Validation(map[string][]string{
+			"token": {"Either token or OTP code is required"},
 		})
 	}
 

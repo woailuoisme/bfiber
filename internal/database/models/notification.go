@@ -5,7 +5,7 @@ import (
 
 	"github.com/uptrace/bun"
 
-	"bgin/internal/database"
+	"bfiber/internal/database"
 )
 
 // Notification 表示系统通用站内消息通知模型，映射 notifications 表。

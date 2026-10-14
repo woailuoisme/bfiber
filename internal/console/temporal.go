@@ -10,10 +10,10 @@ import (
 	"github.com/spf13/cobra"
 	"go.uber.org/zap"
 
-	"bgin/internal/console/core"
-	"bgin/internal/features/system"
-	"bgin/internal/platform/storage"
-	"bgin/internal/platform/temporal"
+	"bfiber/internal/console/core"
+	"bfiber/internal/features/system"
+	"bfiber/internal/platform/storage"
+	"bfiber/internal/platform/temporal"
 )
 
 // TemporalWorkOptions 封装 temporal:work 命令的执行参数与依赖容器 (SRP & DIP)。

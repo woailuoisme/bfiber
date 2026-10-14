@@ -4,6 +4,7 @@ import (
 	"cmp"
 	"errors"
 
+	"github.com/gofiber/fiber/v3"
 	"github.com/samber/oops"
 )
 
@@ -22,15 +23,15 @@ const (
 	msgClientClosedRequest = "Client closed request"
 	msgInvalidLogin        = "Invalid email or password"
 	msgUnauthorized        = "Authentication is required"
+	msgServiceUnavailable  = "Service is temporarily unavailable"
 )
 
 // Error 是携带结构化错误码与可选字段级校验明细的业务错误。
 type Error struct {
-	code      Code
-	message   string
-	fields    map[string][]string
-	fieldKeys map[string][]MessageKey
-	cause     error
+	code    Code
+	message string
+	fields  map[string][]string
+	cause   error
 }
 
 // Error 实现 error 接口，返回面向调用方的文案。
@@ -44,6 +45,16 @@ func (e *Error) Code() Code { return e.code }
 
 // Message 返回面向调用方的英文描述。
 func (e *Error) Message() string { return e.message }
+
+// Status 返回错误对应的 HTTP 状态码。
+func (e *Error) Status() int {
+	return Status(e.code)
+}
+
+// FiberError 生成 Fiber 原生 *fiber.Error 实例，便于直接在 Fiber Handler 中作为错误返回。
+func (e *Error) FiberError() *fiber.Error {
+	return fiber.NewError(e.Status(), e.message)
+}
 
 // Fields 返回按字段路径归集的校验明细，无明细时为 nil。
 func (e *Error) Fields() map[string][]string { return e.fields }
@@ -140,7 +151,7 @@ func ClientClosedRequest(cause error) *Error {
 
 // ServiceUnavailable 构造 503，用于外部依赖或本服务暂不可用。
 func ServiceUnavailable(message string) *Error {
-	return New(CodeServiceUnavailable, cmp.Or(message, "Service is temporarily unavailable"))
+	return New(CodeServiceUnavailable, cmp.Or(message, msgServiceUnavailable))
 }
 
 // InvalidCredentials 是登录失败的唯一对外口径，不区分"邮箱不存在"与"密码错误"。
@@ -158,24 +169,6 @@ func Validation(fields map[string][]string) *Error {
 	e.fields = fields
 	return e
 }
-
-// MessageKey 描述一条基于语言包键待渲染的字段级校验提示。
-type MessageKey struct {
-	// Key 语言包 validation 节中的键名。
-	Key string
-	// Param 模板参数，无参时留空。
-	Param string
-}
-
-// ValidationKeys 构造 422 校验错误，字段明细交由中间件按客户端语言进行翻译。
-func ValidationKeys(fields map[string][]MessageKey) *Error {
-	e := New(CodeValidationFailed, msgValidationFailed)
-	e.fieldKeys = fields
-	return e
-}
-
-// FieldKeys 返回待翻译的字段级明细，无明细时为 nil。
-func (e *Error) FieldKeys() map[string][]MessageKey { return e.fieldKeys }
 
 // As 从错误链中提取 *Error，是 errors.AsType 的语义化封装。
 func As(err error) (*Error, bool) {

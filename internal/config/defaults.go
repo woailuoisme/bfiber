@@ -12,12 +12,12 @@ import (
 // setDefaults 集中注册所有配置项的开箱即用默认值。
 func setDefaults(v *viper.Viper) {
 	// 应用
-	v.SetDefault("app_name", "bgin")
+	v.SetDefault("app_name", "bfiber")
 	v.SetDefault("app_env", "local")
 	v.SetDefault("app_debug", false)
-	v.SetDefault("app_port", 3300)
+	v.SetDefault("app_port", 3331)
 	v.SetDefault("enable_docs", false)
-	v.SetDefault("app_url", "http://localhost:3300")
+	v.SetDefault("app_url", "http://localhost:3331")
 	v.SetDefault("app_timezone", "UTC")
 
 	// HTTP 服务
@@ -41,7 +41,7 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("db_debug", false)
 
 	// 播种
-	v.SetDefault("seed_admin_email", "admin@bgin.local")
+	v.SetDefault("seed_admin_email", "admin@bfiber.local")
 	v.SetDefault("seed_admin_name", "Administrator")
 
 	// 存储
@@ -51,15 +51,15 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("aws_use_ssl", true)
 
 	// JWT
-	v.SetDefault("jwt_issuer", "bgin")
+	v.SetDefault("jwt_issuer", "bfiber")
 	v.SetDefault("jwt_ttl", 15*time.Minute)
 	v.SetDefault("jwt_refresh_ttl", 720*time.Hour)
 
 	// 邮件
 	v.SetDefault("mail_enabled", true)
 	v.SetDefault("mail_driver", "mailpit")
-	v.SetDefault("mail_from_address", "no-reply@bgin.local")
-	v.SetDefault("mail_from_name", "bgin")
+	v.SetDefault("mail_from_address", "no-reply@bfiber.local")
+	v.SetDefault("mail_from_name", "bfiber")
 	v.SetDefault("mailpit_host", "127.0.0.1")
 	v.SetDefault("mailpit_port", 1025)
 	v.SetDefault("resend_base_url", "https://api.resend.com")
@@ -89,7 +89,7 @@ func setDefaults(v *viper.Viper) {
 
 	// 事件总线
 	v.SetDefault("eventbus_driver", "go_channel")
-	v.SetDefault("eventbus_topic_prefix", "bgin")
+	v.SetDefault("eventbus_topic_prefix", "bfiber")
 	v.SetDefault("eventbus_log_level", "warn")
 	v.SetDefault("eventbus_buffer_size", 2048)
 
@@ -153,7 +153,7 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("temporal_enabled", false)
 	v.SetDefault("temporal_host_port", "127.0.0.1:7233")
 	v.SetDefault("temporal_namespace", "default")
-	v.SetDefault("temporal_task_queue", "bgin-tasks")
+	v.SetDefault("temporal_task_queue", "bfiber-tasks")
 	v.SetDefault("temporal_activity_concurrency", 10)
 	v.SetDefault("temporal_workflow_concurrency", 10)
 }

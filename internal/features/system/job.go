@@ -6,9 +6,9 @@ import (
 
 	"go.uber.org/zap"
 
-	"bgin/internal/platform/logger"
-	"bgin/internal/platform/queue"
-	"bgin/internal/platform/storage"
+	"bfiber/internal/platform/logger"
+	"bfiber/internal/platform/queue"
+	"bfiber/internal/platform/storage"
 )
 
 // TaskCleanupTempFiles 声明系统清理临时文件的 Asynq 任务唯一标识符。

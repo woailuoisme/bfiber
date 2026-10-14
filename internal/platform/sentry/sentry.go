@@ -11,7 +11,7 @@ import (
 	"github.com/getsentry/sentry-go"
 	"github.com/samber/lo"
 
-	"bgin/internal/config"
+	"bfiber/internal/config"
 )
 
 var (

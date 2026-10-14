@@ -10,7 +10,7 @@ import (
 
 	"github.com/redis/rueidis/rueidislock"
 
-	"bgin/internal/config"
+	"bfiber/internal/config"
 )
 
 var (

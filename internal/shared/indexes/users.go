@@ -8,8 +8,8 @@ import (
 	"github.com/samber/lo"
 	"github.com/uptrace/bun"
 
-	"bgin/internal/database/models"
-	"bgin/internal/platform/search"
+	"bfiber/internal/database/models"
+	"bfiber/internal/platform/search"
 )
 
 // defaultBatchSize 默认批量检索导入批次大小。

@@ -2,21 +2,21 @@
 package admin
 
 import (
-	"github.com/gin-gonic/gin"
+	"github.com/gofiber/fiber/v3"
 
-	"bgin/internal/middleware"
-	"bgin/internal/platform/authorization"
+	"bfiber/internal/middleware"
+	"bfiber/internal/platform/authorization"
 )
 
 // RegisterAdminRoutes 注册管理端点（/v1/admin/users）。
 // 每个端点各自声明所需权限码，权限矩阵见 internal/platform/authorization/rbac/policy.csv。
-func RegisterAdminRoutes(router *gin.RouterGroup, handler *Handler, mw *middleware.Middleware) {
+func RegisterAdminRoutes(router fiber.Router, handler *Handler, mw *middleware.Middleware) {
 	group := router.Group("/admin/users", mw.Auth("admin"), mw.Throttle(middleware.TierAuthenticated))
 
-	group.GET("", mw.Can(authorization.ResourceUsers, authorization.ActionList), handler.ListUsers)
-	group.GET("/export", mw.Can(authorization.ResourceUsers, authorization.ActionList), handler.ExportUsers)
-	group.POST("", mw.Can(authorization.ResourceUsers, authorization.ActionCreate), handler.CreateUser)
-	group.GET("/:id", mw.Can(authorization.ResourceUsers, authorization.ActionRead), handler.GetUser)
-	group.PATCH("/:id", mw.Can(authorization.ResourceUsers, authorization.ActionUpdate), handler.UpdateUser)
-	group.DELETE("/:id", mw.Can(authorization.ResourceUsers, authorization.ActionDelete), handler.DeleteUser)
+	group.Get("", mw.Can(authorization.ResourceUsers, authorization.ActionList), handler.ListUsers)
+	group.Get("/export", mw.Can(authorization.ResourceUsers, authorization.ActionList), handler.ExportUsers)
+	group.Post("", mw.Can(authorization.ResourceUsers, authorization.ActionCreate), handler.CreateUser)
+	group.Get("/:id", mw.Can(authorization.ResourceUsers, authorization.ActionRead), handler.GetUser)
+	group.Patch("/:id", mw.Can(authorization.ResourceUsers, authorization.ActionUpdate), handler.UpdateUser)
+	group.Delete("/:id", mw.Can(authorization.ResourceUsers, authorization.ActionDelete), handler.DeleteUser)
 }

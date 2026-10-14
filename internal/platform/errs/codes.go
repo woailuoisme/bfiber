@@ -2,15 +2,51 @@
 package errs
 
 import (
-	"net/http"
+	"cmp"
 	"slices"
 	"strings"
+
+	"github.com/gofiber/fiber/v3"
+	"github.com/samber/lo"
 )
 
 // Code 是写入响应体 code 字段的机器可读错误码。
 type Code string
 
-// StatusClientClosedRequest 是客户端主动断开连接的状态码（499）。
+// String 返回错误码的字符串表示。
+func (c Code) String() string {
+	return string(c)
+}
+
+// Status 返回错误码对应的 HTTP 状态码；未登记的错误码一律按 500 处理。
+func (c Code) Status() int {
+	return Status(c)
+}
+
+// Message 返回当前错误码对应的兜底对外文案。
+func (c Code) Message() string {
+	return MessageForStatus(c.Status())
+}
+
+// FiberError 生成 Fiber 原生 *fiber.Error 实例，便于直接在 Fiber Handler 中作为错误返回。
+func (c Code) FiberError(message ...string) *fiber.Error {
+	msg := cmp.Or(lo.FirstOrEmpty(message), c.Message())
+	return fiber.NewError(c.Status(), msg)
+}
+
+// New 构造携带当前错误码的领域业务错误对象。
+func (c Code) New(message ...string) *Error {
+	msg := cmp.Or(lo.FirstOrEmpty(message), c.Message())
+	return New(c, msg)
+}
+
+// Wrap 在既有底层错误之上附加当前错误码语义。
+func (c Code) Wrap(cause error, message ...string) *Error {
+	msg := cmp.Or(lo.FirstOrEmpty(message), c.Message())
+	return Wrap(c, msg, cause)
+}
+
+// StatusClientClosedRequest 是客户端主动断开连接的状态码（Nginx 499 非标扩展）。
 const StatusClientClosedRequest = 499
 
 // 通用错误码。这些值必须与 api.md 5.2 的描述保持一致。
@@ -157,68 +193,68 @@ func ExposedCodes() []Code {
 
 // statuses 是错误码到 HTTP 状态码的唯一映射表，新增错误码必须在此登记。
 var statuses = map[Code]int{
-	CodeBadRequest:          http.StatusBadRequest,
-	CodeValidationFailed:    http.StatusUnprocessableEntity,
-	CodeNotFound:            http.StatusNotFound,
-	CodeMethodNotAllowed:    http.StatusMethodNotAllowed,
-	CodeForbidden:           http.StatusForbidden,
-	CodeConflict:            http.StatusConflict,
-	CodeRateLimited:         http.StatusTooManyRequests,
-	CodeIdempotencyConflict: http.StatusConflict,
-	CodeIdempotencyMismatch: http.StatusUnprocessableEntity,
-	CodeIdempotencyRequired: http.StatusBadRequest,
-	CodeRequestTooLarge:     http.StatusRequestEntityTooLarge,
-	CodeGatewayTimeout:      http.StatusGatewayTimeout,
+	CodeBadRequest:          fiber.StatusBadRequest,
+	CodeValidationFailed:    fiber.StatusUnprocessableEntity,
+	CodeNotFound:            fiber.StatusNotFound,
+	CodeMethodNotAllowed:    fiber.StatusMethodNotAllowed,
+	CodeForbidden:           fiber.StatusForbidden,
+	CodeConflict:            fiber.StatusConflict,
+	CodeRateLimited:         fiber.StatusTooManyRequests,
+	CodeIdempotencyConflict: fiber.StatusConflict,
+	CodeIdempotencyMismatch: fiber.StatusUnprocessableEntity,
+	CodeIdempotencyRequired: fiber.StatusBadRequest,
+	CodeRequestTooLarge:     fiber.StatusRequestEntityTooLarge,
+	CodeGatewayTimeout:      fiber.StatusGatewayTimeout,
 	CodeClientClosedRequest: StatusClientClosedRequest,
-	CodeServiceUnavailable:  http.StatusServiceUnavailable,
-	CodeInternal:            http.StatusInternalServerError,
+	CodeServiceUnavailable:  fiber.StatusServiceUnavailable,
+	CodeInternal:            fiber.StatusInternalServerError,
 
-	CodeAuthInvalidCredentials: http.StatusUnauthorized,
-	CodeAuthEmailAlreadyExists: http.StatusConflict,
-	CodeAuthUsernameTaken:      http.StatusConflict,
-	CodeAuthPhoneNumberTaken:   http.StatusConflict,
-	CodeAuthAccountBanned:      http.StatusForbidden,
-	CodeAuthEmailNotVerified:   http.StatusForbidden,
-	CodeAuthOTPInvalid:         http.StatusUnprocessableEntity,
-	CodeAuthOTPExpired:         http.StatusUnprocessableEntity,
-	CodeAuthOTPTooManyAttempts: http.StatusTooManyRequests,
-	CodeAuthOTPRateLimited:     http.StatusTooManyRequests,
-	CodeAuthTokenInvalid:       http.StatusUnauthorized,
-	CodeAuthTokenExpired:       http.StatusUnauthorized,
-	CodeAuthTokenRevoked:       http.StatusUnauthorized,
-	CodeAuthPasswordMismatch:   http.StatusUnprocessableEntity,
-	CodeAuthPasswordTooWeak:    http.StatusUnprocessableEntity,
+	CodeAuthInvalidCredentials: fiber.StatusUnauthorized,
+	CodeAuthEmailAlreadyExists: fiber.StatusConflict,
+	CodeAuthUsernameTaken:      fiber.StatusConflict,
+	CodeAuthPhoneNumberTaken:   fiber.StatusConflict,
+	CodeAuthAccountBanned:      fiber.StatusForbidden,
+	CodeAuthEmailNotVerified:   fiber.StatusForbidden,
+	CodeAuthOTPInvalid:         fiber.StatusUnprocessableEntity,
+	CodeAuthOTPExpired:         fiber.StatusUnprocessableEntity,
+	CodeAuthOTPTooManyAttempts: fiber.StatusTooManyRequests,
+	CodeAuthOTPRateLimited:     fiber.StatusTooManyRequests,
+	CodeAuthTokenInvalid:       fiber.StatusUnauthorized,
+	CodeAuthTokenExpired:       fiber.StatusUnauthorized,
+	CodeAuthTokenRevoked:       fiber.StatusUnauthorized,
+	CodeAuthPasswordMismatch:   fiber.StatusUnprocessableEntity,
+	CodeAuthPasswordTooWeak:    fiber.StatusUnprocessableEntity,
 
-	CodeExcelOpenError:    http.StatusBadRequest,
-	CodeExcelReadError:    http.StatusBadRequest,
-	CodeExcelFileTooLarge: http.StatusRequestEntityTooLarge,
-	CodeExcelMapError:     http.StatusUnprocessableEntity,
-	CodeExcelRowsError:    http.StatusUnprocessableEntity,
-	CodeExcelReadRowError: http.StatusUnprocessableEntity,
-	CodeExcelDuplicateRow: http.StatusConflict,
-	CodeEmptySheets:       http.StatusBadRequest,
-	CodeCSVReadError:      http.StatusBadRequest,
+	CodeExcelOpenError:    fiber.StatusBadRequest,
+	CodeExcelReadError:    fiber.StatusBadRequest,
+	CodeExcelFileTooLarge: fiber.StatusRequestEntityTooLarge,
+	CodeExcelMapError:     fiber.StatusUnprocessableEntity,
+	CodeExcelRowsError:    fiber.StatusUnprocessableEntity,
+	CodeExcelReadRowError: fiber.StatusUnprocessableEntity,
+	CodeExcelDuplicateRow: fiber.StatusConflict,
+	CodeEmptySheets:       fiber.StatusBadRequest,
+	CodeCSVReadError:      fiber.StatusBadRequest,
 
-	CodeNotificationMissingRecipient:   http.StatusBadRequest,
-	CodeNotificationMissingRecipientID: http.StatusBadRequest,
-	CodeNotificationUnsupportedSMS:     http.StatusBadRequest,
-	CodeNotificationUnsupportedMail:    http.StatusBadRequest,
-	CodeNotificationUnsupportedDB:      http.StatusBadRequest,
-	CodeNotificationUnsupportedRT:      http.StatusBadRequest,
-	CodeNotificationUnsupportedGotify:  http.StatusBadRequest,
-	CodeNotificationUnsupportedChat:    http.StatusBadRequest,
-	CodeNotificationChannelNotFound:    http.StatusBadRequest,
-	CodeNotificationRateLimited:        http.StatusTooManyRequests,
-	CodeNotificationDeduplicated:       http.StatusConflict,
-	CodeMailMissingRecipient:           http.StatusBadRequest,
-	CodeSMSMissingPhone:                http.StatusBadRequest,
-	CodeInvalidSMSMessage:              http.StatusBadRequest,
-	CodeInvalidGotifyMessage:           http.StatusBadRequest,
-	CodeInvalidChatMessage:             http.StatusBadRequest,
+	CodeNotificationMissingRecipient:   fiber.StatusBadRequest,
+	CodeNotificationMissingRecipientID: fiber.StatusBadRequest,
+	CodeNotificationUnsupportedSMS:     fiber.StatusBadRequest,
+	CodeNotificationUnsupportedMail:    fiber.StatusBadRequest,
+	CodeNotificationUnsupportedDB:      fiber.StatusBadRequest,
+	CodeNotificationUnsupportedRT:      fiber.StatusBadRequest,
+	CodeNotificationUnsupportedGotify:  fiber.StatusBadRequest,
+	CodeNotificationUnsupportedChat:    fiber.StatusBadRequest,
+	CodeNotificationChannelNotFound:    fiber.StatusBadRequest,
+	CodeNotificationRateLimited:        fiber.StatusTooManyRequests,
+	CodeNotificationDeduplicated:       fiber.StatusConflict,
+	CodeMailMissingRecipient:           fiber.StatusBadRequest,
+	CodeSMSMissingPhone:                fiber.StatusBadRequest,
+	CodeInvalidSMSMessage:              fiber.StatusBadRequest,
+	CodeInvalidGotifyMessage:           fiber.StatusBadRequest,
+	CodeInvalidChatMessage:             fiber.StatusBadRequest,
 
-	CodePaymentCapabilityNotSupported: http.StatusBadRequest,
+	CodePaymentCapabilityNotSupported: fiber.StatusBadRequest,
 
-	CodeDatabaseUnavailable: http.StatusServiceUnavailable,
+	CodeDatabaseUnavailable: fiber.StatusServiceUnavailable,
 }
 
 // Status 返回错误码对应的 HTTP 状态码；未登记的错误码一律按 500 处理。
@@ -226,25 +262,57 @@ func Status(c Code) int {
 	if s, ok := statuses[c]; ok {
 		return s
 	}
-	return http.StatusInternalServerError
+	return fiber.StatusInternalServerError
+}
+
+// CodeForStatus 返回常见 HTTP 状态码对应的标准业务错误码。
+func CodeForStatus(status int) Code {
+	switch status {
+	case fiber.StatusBadRequest:
+		return CodeBadRequest
+	case fiber.StatusUnauthorized:
+		return CodeAuthTokenInvalid
+	case fiber.StatusForbidden:
+		return CodeForbidden
+	case fiber.StatusNotFound:
+		return CodeNotFound
+	case fiber.StatusMethodNotAllowed:
+		return CodeMethodNotAllowed
+	case fiber.StatusConflict:
+		return CodeConflict
+	case fiber.StatusRequestEntityTooLarge:
+		return CodeRequestTooLarge
+	case fiber.StatusUnprocessableEntity:
+		return CodeValidationFailed
+	case fiber.StatusTooManyRequests:
+		return CodeRateLimited
+	case fiber.StatusGatewayTimeout:
+		return CodeGatewayTimeout
+	case fiber.StatusServiceUnavailable:
+		return CodeServiceUnavailable
+	case StatusClientClosedRequest:
+		return CodeClientClosedRequest
+	default:
+		return CodeInternal
+	}
 }
 
 // statusMessages 是各状态码在错误未声明对外文案时的兜底描述。
 // 4xx 必须给出与状态语义相符的说明，不能沿用 5xx 的"意外错误"口吻。
 var statusMessages = map[int]string{
-	http.StatusBadRequest:            msgBadRequest,
-	http.StatusUnauthorized:          msgUnauthorized,
-	http.StatusForbidden:             msgForbidden,
-	http.StatusNotFound:              msgNotFound,
-	http.StatusMethodNotAllowed:      msgMethodNotAllowed,
-	http.StatusConflict:              msgConflict,
-	http.StatusRequestEntityTooLarge: msgRequestTooLarge,
-	http.StatusUnprocessableEntity:   msgValidationFailed,
-	http.StatusTooManyRequests:       msgRateLimited,
-	StatusClientClosedRequest:        msgClientClosedRequest,
-	http.StatusGatewayTimeout:        msgGatewayTimeout,
-	http.StatusServiceUnavailable:    "Service is temporarily unavailable",
-	http.StatusInternalServerError:   msgInternal,
+	fiber.StatusBadRequest:            msgBadRequest,
+	fiber.StatusUnauthorized:          msgUnauthorized,
+	fiber.StatusForbidden:             msgForbidden,
+	fiber.StatusNotFound:              msgNotFound,
+	fiber.StatusMethodNotAllowed:      msgMethodNotAllowed,
+	fiber.StatusConflict:              msgConflict,
+	fiber.StatusRequestEntityTooLarge: msgRequestTooLarge,
+	fiber.StatusUnprocessableEntity:   msgValidationFailed,
+	fiber.StatusTooManyRequests:       msgRateLimited,
+	StatusClientClosedRequest:         msgClientClosedRequest,
+	fiber.StatusGatewayTimeout:        msgGatewayTimeout,
+	fiber.StatusServiceUnavailable:    msgServiceUnavailable,
+	fiber.StatusInternalServerError:   msgInternal,
 }
 
 // MessageForStatus 返回状态码对应的兜底对外文案，未覆盖的状态一律按 500 文案处理。

@@ -12,9 +12,9 @@ import (
 	"github.com/samber/lo"
 	"github.com/uptrace/bun"
 
-	"bgin/internal/database/models"
-	"bgin/internal/platform/errs"
-	"bgin/internal/shared/enums"
+	"bfiber/internal/database/models"
+	"bfiber/internal/platform/errs"
+	"bfiber/internal/shared/enums"
 )
 
 // uniqueViolation 是 PostgreSQL 的唯一约束冲突错误码。
@@ -182,10 +182,9 @@ func SetNullable(fields map[string]any, column string, value omitnull.Val[string
 }
 
 // FieldCannotBeNull 用于库层 NOT NULL、因而不能接受显式 null 的字段。
-// 这里只声明"违反 not_null 规则"，文案由渲染层按请求语言从 lang/*/validation.toml 取。
 func FieldCannotBeNull(field string) error {
-	return errs.ValidationKeys(map[string][]errs.MessageKey{
-		field: {{Key: "not_null"}},
+	return errs.Validation(map[string][]string{
+		field: {"cannot be null"},
 	})
 }
 

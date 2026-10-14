@@ -12,8 +12,7 @@ import (
 	"github.com/samber/lo"
 	"github.com/samber/oops"
 
-	"bgin/internal/platform/errs"
-	"bgin/internal/platform/resilience"
+	"bfiber/internal/platform/errs"
 )
 
 var (
@@ -54,10 +53,10 @@ func NewClientFromConfig(cfg Config) (Client, error) {
 	client := meilisearch.New(
 		host,
 		meilisearch.WithAPIKey(apiKey),
-		meilisearch.WithCustomClient(resilience.NewResilientHTTPClient(resilience.ResilientTransportConfig{
-			BaseTransport: meiliHTTPTransport,
-			Timeout:       5 * time.Second,
-		})),
+		meilisearch.WithCustomClient(&http.Client{
+			Transport: meiliHTTPTransport,
+			Timeout:   5 * time.Second,
+		}),
 	)
 
 	return NewMeilisearchClient(client, cfg.Prefix), nil

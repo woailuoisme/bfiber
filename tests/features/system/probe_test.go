@@ -7,17 +7,18 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"testing"
 	"time"
 
-	"github.com/gin-gonic/gin"
+	"github.com/gofiber/fiber/v3"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"bgin/internal/features/system"
-	"bgin/internal/platform/logger"
+	"bfiber/internal/features/system"
+	"bfiber/internal/platform/logger"
 )
 
 // errInternal 模拟底层驱动的真实报错：它带着目标地址与凭据，这类内容绝不能出现在响应体里。
@@ -45,9 +46,8 @@ func (s stubPinger) Ping(ctx context.Context) error {
 }
 
 // newProbe 按给定的探测结果装配探针路由，回传引擎与日志缓冲。
-func newProbe(t *testing.T, database, cache system.Pinger) (*gin.Engine, *bytes.Buffer) {
+func newProbe(t *testing.T, database, cache system.Pinger) (*fiber.App, *bytes.Buffer) {
 	t.Helper()
-	gin.SetMode(gin.TestMode)
 
 	logs := &bytes.Buffer{}
 	l := logger.NewWithOptions(
@@ -56,21 +56,25 @@ func newProbe(t *testing.T, database, cache system.Pinger) (*gin.Engine, *bytes.
 		logger.WithWriter(logs),
 	)
 
-	engine := gin.New()
-	system.RegisterRoutes(engine, system.NewHandler(system.NewService(system.Deps{
+	app := fiber.New()
+	system.RegisterRoutes(app, system.NewHandler(system.NewService(system.Deps{
 		Database: database,
 		Cache:    cache,
 	}), l))
-	return engine, logs
+	return app, logs
 }
 
 // get 驱动一次请求，回传状态码与原始响应体。
-func get(t *testing.T, engine *gin.Engine, path string) (int, string) {
+func get(t *testing.T, app *fiber.App, path string) (int, string) {
 	t.Helper()
 
-	recorder := httptest.NewRecorder()
-	engine.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, path, nil))
-	return recorder.Code, recorder.Body.String()
+	req := httptest.NewRequest(http.MethodGet, path, nil)
+	resp, err := app.Test(req, fiber.TestConfig{Timeout: 0})
+	require.NoError(t, err)
+	defer func() { _ = resp.Body.Close() }()
+	body, err := io.ReadAll(resp.Body)
+	require.NoError(t, err)
+	return resp.StatusCode, string(body)
 }
 
 // TestLivenessIgnoresDependencies 锁定存活探针的边界：依赖全挂也必须返回 200。
@@ -147,7 +151,7 @@ func TestReadinessDegradedWhenNonCriticalFails(t *testing.T) {
 }
 
 // TestReadinessKeepsErrorDetailOutOfResponse 是本组里最要紧的一条：底层错误常含目标地址与
-// 凭据，它必须只出现在日志里。gin 官方文档的多依赖示例把 err.Error() 直接写进响应体，
+// 凭据，它必须只出现在日志里。部分文档的多依赖示例把 err.Error() 直接写进响应体，
 // 这里刻意不照抄——响应体只给固定词汇，排查信息留给日志。
 func TestReadinessKeepsErrorDetailOutOfResponse(t *testing.T) {
 	engine, logs := newProbe(t, stubPinger{err: errInternal}, stubPinger{})
@@ -211,7 +215,6 @@ func (s stubComponent) Enabled() bool {
 
 // TestReadinessWithExtendedComponents 验证 storage(garage), search(meilisearch), realtime(centrifugo), imgproxy 接入。
 func TestReadinessWithExtendedComponents(t *testing.T) {
-	gin.SetMode(gin.TestMode)
 	logs := &bytes.Buffer{}
 	l := logger.NewWithOptions(
 		logger.WithLevel("debug"),
@@ -219,7 +222,7 @@ func TestReadinessWithExtendedComponents(t *testing.T) {
 		logger.WithWriter(logs),
 	)
 
-	engine := gin.New()
+	app := fiber.New()
 	svc := system.NewService(system.Deps{
 		Database: stubPinger{},
 		Cache:    stubPinger{},
@@ -230,9 +233,9 @@ func TestReadinessWithExtendedComponents(t *testing.T) {
 		Mailer:   stubComponent{driver: "mailpit", enabled: true},
 		Temporal: stubComponent{driver: "temporal", enabled: false},
 	})
-	system.RegisterRoutes(engine, system.NewHandler(svc, l))
+	system.RegisterRoutes(app, system.NewHandler(svc, l))
 
-	status, body := get(t, engine, "/readyz")
+	status, body := get(t, app, "/readyz")
 	require.Equal(t, http.StatusOK, status)
 
 	var got system.ReadinessResponse
@@ -284,7 +287,6 @@ func TestReadinessWithExtendedComponents(t *testing.T) {
 
 // TestReadinessDegradedWhenExtendedComponentFails 验证启用的扩展组件故障时优雅降级为 degraded。
 func TestReadinessDegradedWhenExtendedComponentFails(t *testing.T) {
-	gin.SetMode(gin.TestMode)
 	logs := &bytes.Buffer{}
 	l := logger.NewWithOptions(
 		logger.WithLevel("debug"),
@@ -292,16 +294,16 @@ func TestReadinessDegradedWhenExtendedComponentFails(t *testing.T) {
 		logger.WithWriter(logs),
 	)
 
-	engine := gin.New()
+	app := fiber.New()
 	svc := system.NewService(system.Deps{
 		Database: stubPinger{},
 		Cache:    stubPinger{},
 		Storage:  stubComponent{driver: "garage", enabled: true},
 		Imgproxy: stubComponent{driver: "imgproxy", enabled: true, err: errors.New("imgproxy connection refused")},
 	})
-	system.RegisterRoutes(engine, system.NewHandler(svc, l))
+	system.RegisterRoutes(app, system.NewHandler(svc, l))
 
-	status, body := get(t, engine, "/readyz")
+	status, body := get(t, app, "/readyz")
 	require.Equal(t, http.StatusOK, status)
 
 	var got system.ReadinessResponse
@@ -316,7 +318,6 @@ func TestReadinessDegradedWhenExtendedComponentFails(t *testing.T) {
 
 // TestReadinessDegradedWhenTemporalFails 验证启用的 Temporal 组件故障时优雅降级为 degraded。
 func TestReadinessDegradedWhenTemporalFails(t *testing.T) {
-	gin.SetMode(gin.TestMode)
 	logs := &bytes.Buffer{}
 	l := logger.NewWithOptions(
 		logger.WithLevel("debug"),
@@ -324,15 +325,15 @@ func TestReadinessDegradedWhenTemporalFails(t *testing.T) {
 		logger.WithWriter(logs),
 	)
 
-	engine := gin.New()
+	app := fiber.New()
 	svc := system.NewService(system.Deps{
 		Database: stubPinger{},
 		Cache:    stubPinger{},
 		Temporal: stubComponent{driver: "temporal", enabled: true, err: errors.New("temporal connection refused")},
 	})
-	system.RegisterRoutes(engine, system.NewHandler(svc, l))
+	system.RegisterRoutes(app, system.NewHandler(svc, l))
 
-	status, body := get(t, engine, "/readyz")
+	status, body := get(t, app, "/readyz")
 	require.Equal(t, http.StatusOK, status)
 
 	var got system.ReadinessResponse

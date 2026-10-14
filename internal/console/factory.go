@@ -7,10 +7,10 @@ import (
 	"github.com/uptrace/bun"
 	"go.uber.org/zap"
 
-	"bgin/internal/config"
-	"bgin/internal/console/core"
-	"bgin/internal/database"
-	"bgin/internal/platform/logger"
+	"bfiber/internal/config"
+	"bfiber/internal/console/core"
+	"bfiber/internal/database"
+	"bfiber/internal/platform/logger"
 )
 
 // ValidationError 表示控制台命令参数校验失败的强类型错误。

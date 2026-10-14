@@ -9,8 +9,8 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"bgin/internal/console"
-	"bgin/internal/console/core"
+	"bfiber/internal/console"
+	"bfiber/internal/console/core"
 )
 
 // TestNamingUtilities 测试命名转换与单复数处理。
@@ -170,12 +170,12 @@ func TestGenerateCRUD_Execution(t *testing.T) {
 func TestMakeCommand_CLIExecution(t *testing.T) {
 	ctx := context.Background()
 
-	// 旧空格子命令格式已被废除，必须报错：bgin make crud article --dry-run
+	// 旧空格子命令格式已被废除，必须报错：bfiber make crud article --dry-run
 	err := console.Execute(ctx, []string{"make", "crud", "article", "--dry-run"})
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), `unknown command "make"`)
 
-	// 测试 Artisan 冒号命令：bgin make:crud article --dry-run
+	// 测试 Artisan 冒号命令：bfiber make:crud article --dry-run
 	err = console.Execute(ctx, []string{"make:crud", "article", "--dry-run"})
 	require.NoError(t, err)
 
@@ -249,12 +249,12 @@ func TestDestroyCRUD_Execution(t *testing.T) {
 func TestMakeDestroyCommand_CLIExecution(t *testing.T) {
 	ctx := context.Background()
 
-	// 1. 旧空格子命令格式已被废除，必须报错：bgin make destroy article --dry-run
+	// 1. 旧空格子命令格式已被废除，必须报错：bfiber make destroy article --dry-run
 	err := console.Execute(ctx, []string{"make", "destroy", "article", "--dry-run"})
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), `unknown command "make"`)
 
-	// 2. 原 make:destroy 命令已被彻底移除，必须报错：bgin make:destroy
+	// 2. 原 make:destroy 命令已被彻底移除，必须报错：bfiber make:destroy
 	err = console.Execute(ctx, []string{"make:destroy", "article", "--dry-run"})
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), `unknown command "make:destroy"`)

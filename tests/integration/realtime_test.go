@@ -1,6 +1,6 @@
 //go:build integration
 
-// Package integration_test 针对真实运行的 Centrifugo 实时通信节点与 Gin 后端端点进行全量真实链路集成测试。
+// Package integration_test 针对真实运行的 Centrifugo 实时通信节点与 Fiber 后端端点进行全量真实链路集成测试。
 // 运行方式：rtk go test -v -tags=integration -run TestRealtime ./tests/integration/...
 package integration_test
 
@@ -12,22 +12,22 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
-	"net/http/httptest"
 	"net/url"
 	"os"
 	"strings"
 	"testing"
 	"time"
 
-	"github.com/gin-gonic/gin"
+	"github.com/gofiber/fiber/v3"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"golang.org/x/net/websocket"
 
-	"bgin/internal/config"
-	featureRealtime "bgin/internal/features/realtime"
-	platformRealtime "bgin/internal/platform/realtime"
+	"bfiber/internal/config"
+	featureRealtime "bfiber/internal/features/realtime"
+	platformRealtime "bfiber/internal/platform/realtime"
 )
 
 // getRealtimeConfig 加载当前环境的 Centrifugo 配置。
@@ -180,7 +180,8 @@ func TestRealtime_SSEClientStreamingVerification(t *testing.T) {
 	connectCmd, err := json.Marshal(map[string]any{"token": token})
 	require.NoError(t, err)
 
-	sseURL := fmt.Sprintf("%s://%s/connection/uni_sse?cf_connect=%s",
+	sseURL := fmt.Sprintf(
+		"%s://%s/connection/uni_sse?cf_connect=%s",
 		parsed.Scheme,
 		parsed.Host,
 		url.QueryEscape(string(connectCmd)),
@@ -294,33 +295,37 @@ func TestRealtime_ProxySubscribeCallbackContract(t *testing.T) {
 	})
 	handler := featureRealtime.NewHandler(svc)
 
-	router := gin.New()
-	router.POST("/v1/realtime/proxy/subscribe", handler.ProxySubscribe)
+	app := fiber.New()
+	app.Post("/v1/realtime/proxy/subscribe", handler.ProxySubscribe)
 
 	// 1. 合法请求与有效签名
-	w := httptest.NewRecorder()
 	httpReq, err := http.NewRequestWithContext(t.Context(), http.MethodPost, "/v1/realtime/proxy/subscribe", strings.NewReader(string(rawBody)))
 	require.NoError(t, err)
 	httpReq.Header.Set("Content-Type", "application/json")
 	httpReq.Header.Set("X-Centrifugo-Signature", signature)
 
-	router.ServeHTTP(w, httpReq)
-	assert.Equal(t, http.StatusOK, w.Code)
+	resp, err := app.Test(httpReq, fiber.TestConfig{Timeout: 0})
+	require.NoError(t, err)
+	defer func() { _ = resp.Body.Close() }()
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
 
 	var respBody map[string]any
-	err = json.Unmarshal(w.Body.Bytes(), &respBody)
+	respBytes, err := io.ReadAll(resp.Body)
+	require.NoError(t, err)
+	err = json.Unmarshal(respBytes, &respBody)
 	require.NoError(t, err)
 	assert.NotNil(t, respBody["result"], "合法的订阅请求应返回 result 字段以准许订阅")
 
 	// 2. 伪造/非法签名应返回 403 Forbidden
-	wBad := httptest.NewRecorder()
 	badReq, err := http.NewRequestWithContext(t.Context(), http.MethodPost, "/v1/realtime/proxy/subscribe", strings.NewReader(string(rawBody)))
 	require.NoError(t, err)
 	badReq.Header.Set("Content-Type", "application/json")
 	badReq.Header.Set("X-Centrifugo-Signature", "tampered-bad-signature")
 
-	router.ServeHTTP(wBad, badReq)
-	assert.Equal(t, http.StatusForbidden, wBad.Code)
+	badResp, err := app.Test(badReq, fiber.TestConfig{Timeout: 0})
+	require.NoError(t, err)
+	defer func() { _ = badResp.Body.Close() }()
+	assert.Equal(t, http.StatusForbidden, badResp.StatusCode)
 }
 
 // TestRealtime_WebSocketClientStreamingVerification 真实验证客户端经 WebSocket 握手并实时接收推送事件。

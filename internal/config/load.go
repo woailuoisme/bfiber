@@ -48,7 +48,7 @@ func Load() (*Config, error) {
 func Default() *Config {
 	return &Config{
 		App: AppConfig{
-			Name: "bgin",
+			Name: "bfiber",
 			Env:  "local",
 		},
 	}
