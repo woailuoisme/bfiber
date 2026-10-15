@@ -12,7 +12,9 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
+	"time"
 
+	fiberClient "github.com/gofiber/fiber/v3/client"
 	"github.com/lionsoul2014/ip2region/binding/golang/xdb"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -133,6 +135,47 @@ func TestGeoIPUpdateOptions_Run_SuccessWithMockServer(t *testing.T) {
 	assert.Contains(t, buf.String(), "updated successfully")
 
 	// 验证下载文件可被官方 xdb 加载 Header
+	header, err := xdb.LoadHeaderFromBuff(content[:xdb.HeaderInfoLength])
+	require.NoError(t, err)
+	ver, err := xdb.VersionFromHeader(header)
+	require.NoError(t, err)
+	assert.NotNil(t, ver)
+}
+
+// TestGeoIPUpdateOptions_Run_SuccessWithFiberClient 测试使用 Fiber v3 Client 下载并原子替换目标文件。
+func TestGeoIPUpdateOptions_Run_SuccessWithFiberClient(t *testing.T) {
+	mockData := makeMockXDBData()
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		assert.Equal(t, "bfiber-cli/geoip-updater", r.Header.Get("User-Agent"))
+		w.Header().Set("Content-Type", "application/octet-stream")
+		w.Header().Set("Content-Length", strconv.Itoa(len(mockData)))
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write(mockData)
+	}))
+	defer server.Close()
+
+	dir := t.TempDir()
+	targetPath := filepath.Join(dir, "fiber_sub", "ip2region_v4.xdb")
+
+	buf := new(bytes.Buffer)
+	f := &console.TestFactory{
+		StreamsValue: &core.IOStreams{Out: buf, ErrOut: buf},
+	}
+
+	opts := console.NewGeoIPUpdateOptions(f)
+	opts.Path = targetPath
+	opts.URL = server.URL
+	opts.Force = true
+	opts.Client = fiberClient.New().SetTimeout(10 * time.Second)
+
+	err := opts.Run(context.Background())
+	require.NoError(t, err)
+
+	content, err := os.ReadFile(targetPath)
+	require.NoError(t, err)
+	assert.Len(t, content, len(mockData))
+	assert.Contains(t, buf.String(), "updated successfully")
+
 	header, err := xdb.LoadHeaderFromBuff(content[:xdb.HeaderInfoLength])
 	require.NoError(t, err)
 	ver, err := xdb.VersionFromHeader(header)

@@ -10,7 +10,7 @@ import (
 func RegisterRoutes(router fiber.Router, handler *Handler, mw *middleware.Middleware) {
 	group := router.Group("/users", mw.Auth("client"), mw.Throttle(middleware.TierAuthenticated))
 
-	group.Get("/me", handler.GetProfile)
-	group.Patch("/me", handler.UpdateProfile)
-	group.Post("/me/avatar", handler.UploadAvatar)
+	group.Get("/me", handler.GetProfile).Name("users.me.get")
+	group.Patch("/me", handler.UpdateProfile).Name("users.me.update")
+	group.Post("/me/avatar", handler.UploadAvatar).Name("users.me.avatar")
 }

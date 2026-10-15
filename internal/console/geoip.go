@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	fiberClient "github.com/gofiber/fiber/v3/client"
 	"github.com/lionsoul2014/ip2region/binding/golang/xdb"
 	"github.com/spf13/cobra"
 
@@ -33,6 +34,7 @@ type GeoIPUpdateOptions struct {
 	URL        string
 	Force      bool
 	HTTPClient *http.Client
+	Client     *fiberClient.Client
 	Factory    Factory
 }
 
@@ -99,16 +101,19 @@ func (o *GeoIPUpdateOptions) Run(ctx context.Context) error {
 		_ = os.Remove(tmpFile)
 	}()
 
-	client := o.HTTPClient
-	if client == nil {
-		client = &http.Client{Timeout: 90 * time.Second}
-	}
-
 	var downloadErr error
 	for i, u := range urls {
 		core.TitleTo(streams.Out, fmt.Sprintf("Downloading GeoIP database [Source %d/%d: %s]...", i+1, len(urls), u))
 
-		downloadErr = o.downloadFile(ctx, client, u, tmpFile)
+		if o.Client != nil {
+			downloadErr = o.downloadFileFiber(ctx, o.Client, u, tmpFile)
+		} else {
+			httpClient := o.HTTPClient
+			if httpClient == nil {
+				httpClient = &http.Client{Timeout: 90 * time.Second}
+			}
+			downloadErr = o.downloadFile(ctx, httpClient, u, tmpFile)
+		}
 		if downloadErr == nil {
 			break
 		}
@@ -132,6 +137,21 @@ func (o *GeoIPUpdateOptions) Run(ctx context.Context) error {
 
 	core.SuccessTo(streams.Out, "GeoIP database updated successfully at [%s].", o.Path)
 	return nil
+}
+
+func (o *GeoIPUpdateOptions) downloadFileFiber(ctx context.Context, c *fiberClient.Client, url, destPath string) error {
+	req := c.R().SetContext(ctx).SetHeader("Accept-Encoding", "identity").SetUserAgent("bfiber-cli/geoip-updater")
+	resp, err := req.Get(url)
+	if err != nil {
+		return err
+	}
+	defer fiberClient.ReleaseResponse(resp)
+
+	if resp.StatusCode() != http.StatusOK {
+		return fmt.Errorf("HTTP server returned non-200 status: %s", resp.Status())
+	}
+
+	return resp.Save(destPath)
 }
 
 func (o *GeoIPUpdateOptions) downloadFile(ctx context.Context, client *http.Client, url, destPath string) error {

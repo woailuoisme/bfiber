@@ -2,8 +2,11 @@ package authorization_test
 
 import (
 	"context"
+	"net/http"
+	"net/http/httptest"
 	"testing"
 
+	"github.com/gofiber/fiber/v3"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
@@ -89,4 +92,49 @@ func TestEnforcer_GateContract(t *testing.T) {
 	})
 	assert.True(t, e.Can(multiCtx, authorization.ResourceUsers, authorization.ActionCreate))
 	require.NoError(t, e.Authorize(multiCtx, authorization.ResourceUsers, authorization.ActionCreate))
+}
+
+func TestEnforcer_FiberMiddleware(t *testing.T) {
+	e, err := authorization.New()
+	require.NoError(t, err)
+	require.NotNil(t, e.Casbin())
+
+	cbMw := e.FiberMiddleware()
+	require.NotNil(t, cbMw)
+
+	app := fiber.New()
+	app.Use(func(c fiber.Ctx) error {
+		if role := c.Get("X-Role"); role != "" {
+			ctx := authentication.With(c.Context(), authentication.Identity{
+				UserID: "usr_test",
+				Role:   role,
+			})
+			c.SetContext(ctx)
+		}
+		return c.Next()
+	})
+
+	app.Get("/users", cbMw.RequiresPermissions([]string{"users:read"}), func(c fiber.Ctx) error {
+		return c.SendString("allowed")
+	})
+
+	// 1. 未认证 -> 401
+	reqUnauth := httptest.NewRequest(http.MethodGet, "/users", nil)
+	resp, err := app.Test(reqUnauth)
+	require.NoError(t, err)
+	assert.Equal(t, fiber.StatusUnauthorized, resp.StatusCode)
+
+	// 2. 普通用户无权限 -> 403
+	reqUser := httptest.NewRequest(http.MethodGet, "/users", nil)
+	reqUser.Header.Set("X-Role", "user")
+	resp, err = app.Test(reqUser)
+	require.NoError(t, err)
+	assert.Equal(t, fiber.StatusForbidden, resp.StatusCode)
+
+	// 3. 管理员有权限 -> 200
+	reqAdmin := httptest.NewRequest(http.MethodGet, "/users", nil)
+	reqAdmin.Header.Set("X-Role", "admin")
+	resp, err = app.Test(reqAdmin)
+	require.NoError(t, err)
+	assert.Equal(t, fiber.StatusOK, resp.StatusCode)
 }

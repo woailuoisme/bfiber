@@ -5,35 +5,22 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/go-viper/mapstructure/v2"
-	"github.com/spf13/viper"
+	"github.com/caarlos0/env/v11"
+	"github.com/joho/godotenv"
 )
 
 const dotenvPath = ".env"
 
 // Load 从环境文件与操作系统环境变量装载并校验全部应用配置。
 func Load() (*Config, error) {
-	v := viper.New()
-	v.SetConfigFile(dotenvPath)
-	v.SetConfigType("env")
-
-	setDefaults(v)
-	bindEnvKeys(v)
-	v.AutomaticEnv()
-
-	if err := v.ReadInConfig(); err != nil {
-		var notFound viper.ConfigFileNotFoundError
-		if !errors.Is(err, os.ErrNotExist) && !errors.As(err, &notFound) {
+	if err := godotenv.Load(dotenvPath); err != nil {
+		if !errors.Is(err, os.ErrNotExist) {
 			return nil, fmt.Errorf("config: load %s failed: %w", dotenvPath, err)
 		}
 	}
 
 	cfg := &Config{}
-	decodeHook := viper.DecodeHook(mapstructure.ComposeDecodeHookFunc(
-		mapstructure.StringToTimeDurationHookFunc(),
-		stringToSliceHookFunc(","),
-	))
-	if err := v.Unmarshal(cfg, decodeHook); err != nil {
+	if err := env.Parse(cfg); err != nil {
 		return nil, fmt.Errorf("config: parse failed: %w", err)
 	}
 

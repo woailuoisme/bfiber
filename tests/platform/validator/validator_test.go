@@ -86,7 +86,7 @@ func bindJSON(t *testing.T, body string, target any, translator *i18n.Translator
 	return bindErr
 }
 
-// bindOptionalJSON 模拟 BindOptionalJSON 在 Fiber 真实链路下的行为。
+// bindOptionalJSON 模拟空体可选绑定在 Fiber 真实链路下的行为。
 func bindOptionalJSON(t *testing.T, body string, target any) error {
 	t.Helper()
 	var bindErr error
@@ -94,7 +94,9 @@ func bindOptionalJSON(t *testing.T, body string, target any) error {
 		StructValidator: validator.NewFiberValidator(),
 	})
 	app.Post("/", func(c fiber.Ctx) error {
-		bindErr = validator.BindOptionalJSON(c, target)
+		if len(bytes.TrimSpace(c.Body())) > 0 {
+			bindErr = c.Bind().Body(target)
+		}
 		return bindErr
 	})
 

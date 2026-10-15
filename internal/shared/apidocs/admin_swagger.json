@@ -830,7 +830,7 @@
                     ],
                     "allOf": [
                         {
-                            "$ref": "#/definitions/enums.Role"
+                            "$ref": "#/definitions/admin.Role"
                         }
                     ],
                     "example": "user"
@@ -844,7 +844,7 @@
                     ],
                     "allOf": [
                         {
-                            "$ref": "#/definitions/enums.Status"
+                            "$ref": "#/definitions/admin.Status"
                         }
                     ],
                     "example": "active"
@@ -949,7 +949,7 @@
                             "$ref": "#/definitions/enums.Role"
                         }
                     ],
-                    "example": "user"
+                    "example": "admin"
                 },
                 "status": {
                     "description": "账号状态 (active: 正常活跃, inactive: 未激活, banned: 已封禁)",

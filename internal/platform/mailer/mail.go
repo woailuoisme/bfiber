@@ -1,4 +1,4 @@
-// Package mailer 提供统一邮件发送抽象、模板渲染与多驱动支持（内置 Mailpit, Resend 与 Memory 驱动）。
+// Package mailer 提供统一邮件发送抽象、模板渲染与驱动支持（内置 Mailpit 与 Resend 驱动）。
 package mailer
 
 import (
@@ -84,14 +84,10 @@ func RegisterDriver(name string, factory DriverFactory) {
 	customDrivers[strings.ToLower(strings.TrimSpace(name))] = factory
 }
 
-// New 根据 MailConfig 创建邮件发送器驱动实例（内置驱动静态分发，无 init 副作用）。
+// New 根据 MailConfig 创建邮件发送器驱动实例（默认 mailpit，支持 mailpit 与 resend）。
 func New(cfg config.MailConfig, log *zap.Logger) (Mailer, error) {
 	if log == nil {
 		log = zap.NewNop()
-	}
-	if !cfg.IsEnabled() {
-		log.Info("mail delivery is disabled (MAIL_ENABLED=false), falling back to log mailer")
-		return NewLogMailer(log), nil
 	}
 
 	driverName := cmp.Or(strings.ToLower(strings.TrimSpace(cfg.Driver)), "mailpit")
@@ -101,12 +97,6 @@ func New(cfg config.MailConfig, log *zap.Logger) (Mailer, error) {
 		return newMailpitMailer(cfg, log)
 	case "resend":
 		return newResendMailer(cfg, log)
-	case "log":
-		return NewLogMailer(log), nil
-	case "null":
-		return NewNullMailer(), nil
-	case "memory":
-		return NewMemoryMailer(), nil
 	default:
 		driverMu.RLock()
 		factory, exists := customDrivers[driverName]
@@ -124,6 +114,9 @@ func New(cfg config.MailConfig, log *zap.Logger) (Mailer, error) {
 func sendMailable(ctx context.Context, sender Mailer, to string, mailable Mailable) error {
 	if sender == nil {
 		return oops.Code(string(errs.CodeInternal)).Errorf("mail driver cannot be nil")
+	}
+	if strings.TrimSpace(to) == "" {
+		return errs.BadRequest("recipient email cannot be empty")
 	}
 	if mailable == nil {
 		return errs.BadRequest("mailable cannot be nil")

@@ -490,14 +490,14 @@
                         "BearerAuth": []
                     }
                 ],
-                "description": "获取当前登录用户的完整个人档案。",
+                "description": "返回当前登录用户的个人资料视图。",
                 "produces": [
                     "application/json"
                 ],
                 "tags": [
                     "个人资料"
                 ],
-                "summary": "读取本人档案",
+                "summary": "获取本人档案",
                 "responses": {
                     "200": {
                         "description": "本人档案",

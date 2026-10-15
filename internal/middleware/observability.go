@@ -1,4 +1,4 @@
-package global
+package middleware
 
 import (
 	"cmp"
@@ -8,6 +8,7 @@ import (
 
 	contribzap "github.com/gofiber/contrib/v3/zap"
 	"github.com/gofiber/fiber/v3"
+	"github.com/gofiber/fiber/v3/middleware/healthcheck"
 	"github.com/gofiber/fiber/v3/middleware/recover"
 	"github.com/gofiber/fiber/v3/middleware/requestid"
 	"github.com/google/uuid"
@@ -26,13 +27,22 @@ const requestIDPrefix = "req_"
 
 // RequestID 【全局中间件】基于 Fiber v3 官方 requestid 中间件生成并透传请求标识，并将其自动同步注入日志上下文。
 func (m *Middleware) RequestID() fiber.Handler {
+	var log *zap.Logger
+	if m != nil {
+		log = m.logger
+	}
+	return NewRequestID(log)
+}
+
+// NewRequestID 构造独立的请求标识与日志追踪中间件。
+func NewRequestID(log *zap.Logger) fiber.Handler {
 	inner := requestid.New(requestid.Config{
 		Header:    headerRequestID,
 		Generator: newRequestID,
 	})
 
 	return func(c fiber.Ctx) error {
-		rid := strings.TrimSpace(c.Get(headerRequestID))
+		rid := strings.TrimSpace(fiber.GetReqHeader[string](c, headerRequestID))
 		if rid == "" {
 			if isProbeRequest(c) {
 				return c.Next()
@@ -46,15 +56,8 @@ func (m *Middleware) RequestID() fiber.Handler {
 			c.Request().Header.Set(headerRequestID, rid)
 		}
 
-		c.SetContext(logger.WithContext(c.Context(), m.logger, rid))
+		c.SetContext(logger.WithContext(c.Context(), log, rid))
 		return inner(c)
-	}
-}
-
-// SyncLogger 【已内聚至 RequestID】保留方法签名以保证向后兼容性。
-func (m *Middleware) SyncLogger() fiber.Handler {
-	return func(c fiber.Ctx) error {
-		return c.Next()
 	}
 }
 
@@ -72,7 +75,15 @@ func newRequestID() string {
 
 // AccessLog 【全局中间件】基于 Fiber Contrib 官方 zap 中间件记录请求访问日志。
 func (m *Middleware) AccessLog() fiber.Handler {
-	log := m.logger
+	var log *zap.Logger
+	if m != nil {
+		log = m.logger
+	}
+	return NewAccessLog(log)
+}
+
+// NewAccessLog 构造独立的基于 Zap 的访问日志中间件。
+func NewAccessLog(log *zap.Logger) fiber.Handler {
 	if log == nil {
 		log = logger.Default()
 		if log == nil {
@@ -90,7 +101,7 @@ func (m *Middleware) AccessLog() fiber.Handler {
 			if rid := cmp.Or(
 				requestid.FromContext(c),
 				strings.TrimSpace(c.GetRespHeader(headerRequestID)),
-				strings.TrimSpace(c.Get(headerRequestID)),
+				strings.TrimSpace(fiber.GetReqHeader[string](c, headerRequestID)),
 			); rid != "" {
 				fields = append(fields, zap.String("request_id", rid))
 			}
@@ -113,28 +124,22 @@ func isProbeRequest(c fiber.Ctx) bool {
 
 // isProbePath 判断请求是否为高频系统探针路由。
 func isProbePath(path string) bool {
-	return path == "/livez" || path == "/readyz" || path == "/healthz"
+	return fiber.RoutePatternMatch(path, healthcheck.LivenessEndpoint) ||
+		fiber.RoutePatternMatch(path, healthcheck.ReadinessEndpoint)
 }
 
 // Recovery 【全局中间件】基于 Fiber v3 官方 recover 中间件捕获 panic 转为统一 500 响应，堆栈仅进入日志。
 func (m *Middleware) Recovery() fiber.Handler {
-	return recover.New(recover.Config{
-		EnableStackTrace: true,
-		StackTraceHandler: func(c fiber.Ctx, e any) {
-			log := logger.FromContext(c.Context())
-			if _, ok := logger.FromContextOK(c.Context()); !ok && m.logger != nil {
-				log = m.logger
-			}
-			log.Error("request panic recovered",
-				zap.Any("panic", e),
-				zap.String("stack", string(debug.Stack())),
-			)
+	return NewRecovery()
+}
 
-			// 标记当前请求的 panic 异常已由 Zap/Sentry Core 捕获，防止全局 ErrorHandler 二次重复上报
-			MarkSentryReported(c)
-		},
+// NewRecovery 构造独立的恐慌恢复中间件。
+func NewRecovery() fiber.Handler {
+	return recover.New(recover.Config{
+		EnableStackTrace: false,
 		PanicHandler: func(c fiber.Ctx, r any) error {
-			return errs.Internal(nil)
+			MarkSentryReported(c)
+			return errs.NewPanicError(r, string(debug.Stack()))
 		},
 	})
 }

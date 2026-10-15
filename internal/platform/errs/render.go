@@ -64,7 +64,7 @@ func SetErrorCodeContext(c fiber.Ctx, code string) {
 	if c == nil || code == "" {
 		return
 	}
-	c.Locals(errorCodeContextKey, code)
+	fiber.Locals(c, errorCodeContextKey, code)
 }
 
 // ErrorCodeFromContext 读取 Fiber 上下文中的错误码，缺失或类型不符时返回空串。
@@ -72,8 +72,7 @@ func ErrorCodeFromContext(c fiber.Ctx) string {
 	if c == nil {
 		return ""
 	}
-	str, _ := c.Locals(errorCodeContextKey).(string)
-	return str
+	return fiber.Locals[string](c, errorCodeContextKey)
 }
 
 // Render 映射统一错误响应并写回客户端。
@@ -94,16 +93,26 @@ func Render(c fiber.Ctx, err error) error {
 	if status >= fiber.StatusInternalServerError {
 		// 5xx 记录底层根因与调用堆栈，避免对外统一文案遮蔽排错细节。
 		log := logger.FromContext(c.Context())
-		zapFields := []zap.Field{
-			zap.String("stack", Stack(err)),
-			zap.Error(RootCause(err)),
-			zap.Int("status", status),
-			zap.String("code", resp.Code),
+		if panicErr, ok := AsPanic(err); ok {
+			log.Error(
+				"request panic recovered",
+				zap.Any("panic", panicErr.Value),
+				zap.String("stack", panicErr.Stack),
+				zap.Int("status", status),
+				zap.String("code", resp.Code),
+			)
+		} else {
+			zapFields := []zap.Field{
+				zap.String("stack", Stack(err)),
+				zap.Error(RootCause(err)),
+				zap.Int("status", status),
+				zap.String("code", resp.Code),
+			}
+			if extra := OopsFields(err); len(extra) > 0 {
+				zapFields = append(zapFields, extra...)
+			}
+			log.Error("request processing failed", zapFields...)
 		}
-		if extra := OopsFields(err); len(extra) > 0 {
-			zapFields = append(zapFields, extra...)
-		}
-		log.Error("request processing failed", zapFields...)
 	}
 
 	return c.Status(status).JSON(resp)
@@ -172,6 +181,13 @@ func Map(err error) (int, Response) {
 			Code:    string(bizErr.code),
 			Message: bizErr.message,
 			Errors:  bizErr.fields,
+		}
+	}
+
+	if _, ok := AsPanic(err); ok {
+		return fiber.StatusInternalServerError, Response{
+			Code:    string(CodeInternal),
+			Message: msgInternal,
 		}
 	}
 

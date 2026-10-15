@@ -1,43 +1,29 @@
 package profile
 
 import (
-	"github.com/aarondl/opt/omitnull"
 	"github.com/gofiber/fiber/v3"
 
 	"bfiber/internal/platform/authentication"
-	"bfiber/internal/platform/errs"
 	"bfiber/internal/platform/response"
 	"bfiber/internal/platform/validator"
-	"bfiber/internal/shared/media"
-	"bfiber/internal/shared/user"
 )
 
 // Handler 是本人档案端点的 HTTP 适配层。
 type Handler struct {
-	userService  *user.Service
-	mediaManager *media.Manager
+	service *Service
 }
 
 // NewHandler 构造 Handler。
-func NewHandler(userService *user.Service, mediaManager *media.Manager) *Handler {
+func NewHandler(service *Service) *Handler {
 	return &Handler{
-		userService:  userService,
-		mediaManager: mediaManager,
+		service: service,
 	}
 }
 
-func (h *Handler) currentUserID(c fiber.Ctx) (string, error) {
-	id, ok := authentication.FromContext(c.Context())
-	if !ok {
-		return "", errs.Unauthorized(errs.CodeAuthTokenInvalid, "Authentication is required")
-	}
-	return id.UserID, nil
-}
-
-// GetProfile 处理 GET /v1/users/me。
+// GetProfile 获取当前登录用户的个人资料。
 //
-// @Summary      读取本人档案
-// @Description  获取当前登录用户的完整个人档案。
+// @Summary      获取本人档案
+// @Description  返回当前登录用户的个人资料视图。
 // @Tags         个人资料
 // @Produce      json
 // @Security     BearerAuth
@@ -45,12 +31,12 @@ func (h *Handler) currentUserID(c fiber.Ctx) (string, error) {
 // @x-order      1
 // @Router       /users/me [get]
 func (h *Handler) GetProfile(c fiber.Ctx) error {
-	userID, err := h.currentUserID(c)
+	userID, err := authentication.UserID(c.Context())
 	if err != nil {
 		return err
 	}
 
-	profile, err := h.userService.GetProfile(c.Context(), userID)
+	profile, err := h.service.GetProfile(c.Context(), userID)
 	if err != nil {
 		return err
 	}
@@ -70,7 +56,7 @@ func (h *Handler) GetProfile(c fiber.Ctx) error {
 // @x-order      2
 // @Router       /users/me [patch]
 func (h *Handler) UpdateProfile(c fiber.Ctx) error {
-	userID, err := h.currentUserID(c)
+	userID, err := authentication.UserID(c.Context())
 	if err != nil {
 		return err
 	}
@@ -80,7 +66,7 @@ func (h *Handler) UpdateProfile(c fiber.Ctx) error {
 		return err
 	}
 
-	profile, err := h.userService.UpdateProfile(c.Context(), userID, body.fieldSet(), user.ScopeClient)
+	profile, err := h.service.UpdateProfile(c.Context(), userID, body)
 	if err != nil {
 		return err
 	}
@@ -102,7 +88,7 @@ func (h *Handler) UpdateProfile(c fiber.Ctx) error {
 // @x-order      3
 // @Router       /users/me/avatar [post]
 func (h *Handler) UploadAvatar(c fiber.Ctx) error {
-	userID, err := h.currentUserID(c)
+	userID, err := authentication.UserID(c.Context())
 	if err != nil {
 		return err
 	}
@@ -113,19 +99,7 @@ func (h *Handler) UploadAvatar(c fiber.Ctx) error {
 		return err
 	}
 
-	avatarURL, err := h.mediaManager.AttachAvatar(c.Context(), userID, body.Avatar)
-	if err != nil {
-		return err
-	}
-
-	profile, err := h.userService.UpdateProfile(
-		c.Context(),
-		userID,
-		user.FieldSet{
-			Image: omitnull.From(avatarURL),
-		},
-		user.ScopeClient,
-	)
+	profile, err := h.service.UploadAvatar(c.Context(), userID, body.Avatar)
 	if err != nil {
 		return err
 	}

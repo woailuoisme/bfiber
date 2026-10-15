@@ -84,7 +84,7 @@ func TestLivenessIgnoresDependencies(t *testing.T) {
 
 	status, body := get(t, engine, "/livez")
 	assert.Equal(t, http.StatusOK, status)
-	assert.JSONEq(t, `{"status":"ok"}`, body)
+	assert.JSONEq(t, `{"status":"OK"}`, body)
 	assert.Empty(t, logs.String(), "存活探针不该产生任何探测日志")
 
 	// 校验已彻底移除的 /healthz 返回 404
@@ -98,7 +98,7 @@ func TestRootEndpointReturnsOK(t *testing.T) {
 
 	status, body := get(t, engine, "/")
 	assert.Equal(t, http.StatusOK, status)
-	assert.JSONEq(t, `{"status":"ok"}`, body)
+	assert.JSONEq(t, `{"status":"OK"}`, body)
 }
 
 // TestReadinessAllHealthy 覆盖全通路径。
@@ -108,7 +108,7 @@ func TestReadinessAllHealthy(t *testing.T) {
 	status, body := get(t, engine, "/readyz")
 	require.Equal(t, http.StatusOK, status)
 
-	var got system.ReadinessResponse
+	var got system.ReadinessResource
 	require.NoError(t, json.Unmarshal([]byte(body), &got))
 	assert.Equal(t, system.StatusReady, got.Status)
 	assert.Equal(t, system.CheckHealthy, got.Checks[system.ComponentDatabase].Status)
@@ -126,7 +126,7 @@ func TestReadinessReportsUnreachableDependency(t *testing.T) {
 	status, body := get(t, engine, "/readyz")
 	require.Equal(t, http.StatusServiceUnavailable, status)
 
-	var got system.ReadinessResponse
+	var got system.ReadinessResource
 	require.NoError(t, json.Unmarshal([]byte(body), &got))
 	assert.Equal(t, system.StatusNotReady, got.Status)
 	assert.Equal(t, system.CheckUnreachable, got.Checks[system.ComponentDatabase].Status)
@@ -140,7 +140,7 @@ func TestReadinessDegradedWhenNonCriticalFails(t *testing.T) {
 	status, body := get(t, engine, "/readyz")
 	require.Equal(t, http.StatusOK, status)
 
-	var got system.ReadinessResponse
+	var got system.ReadinessResource
 	require.NoError(t, json.Unmarshal([]byte(body), &got))
 	assert.Equal(t, system.StatusDegraded, got.Status)
 	assert.Equal(t, system.CheckHealthy, got.Checks[system.ComponentDatabase].Status)
@@ -232,13 +232,14 @@ func TestReadinessWithExtendedComponents(t *testing.T) {
 		Imgproxy: stubComponent{driver: "imgproxy", enabled: false},
 		Mailer:   stubComponent{driver: "mailpit", enabled: true},
 		Temporal: stubComponent{driver: "temporal", enabled: false},
+		InfluxDB: stubComponent{driver: "influxdb3", enabled: false},
 	})
 	system.RegisterRoutes(app, system.NewHandler(svc, l))
 
 	status, body := get(t, app, "/readyz")
 	require.Equal(t, http.StatusOK, status)
 
-	var got system.ReadinessResponse
+	var got system.ReadinessResource
 	require.NoError(t, json.Unmarshal([]byte(body), &got))
 	assert.Equal(t, system.StatusReady, got.Status)
 
@@ -283,6 +284,13 @@ func TestReadinessWithExtendedComponents(t *testing.T) {
 	assert.Equal(t, system.CheckDisabled, temporalCheck.Status)
 	assert.Equal(t, "temporal", temporalCheck.Driver)
 	assert.False(t, temporalCheck.Critical)
+
+	// influxdb (disabled)
+	influxCheck, ok := got.Checks[system.ComponentInfluxDB]
+	require.True(t, ok)
+	assert.Equal(t, system.CheckDisabled, influxCheck.Status)
+	assert.Equal(t, "influxdb3", influxCheck.Driver)
+	assert.False(t, influxCheck.Critical)
 }
 
 // TestReadinessDegradedWhenExtendedComponentFails 验证启用的扩展组件故障时优雅降级为 degraded。
@@ -306,7 +314,7 @@ func TestReadinessDegradedWhenExtendedComponentFails(t *testing.T) {
 	status, body := get(t, app, "/readyz")
 	require.Equal(t, http.StatusOK, status)
 
-	var got system.ReadinessResponse
+	var got system.ReadinessResource
 	require.NoError(t, json.Unmarshal([]byte(body), &got))
 	assert.Equal(t, system.StatusDegraded, got.Status)
 
@@ -336,7 +344,7 @@ func TestReadinessDegradedWhenTemporalFails(t *testing.T) {
 	status, body := get(t, app, "/readyz")
 	require.Equal(t, http.StatusOK, status)
 
-	var got system.ReadinessResponse
+	var got system.ReadinessResource
 	require.NoError(t, json.Unmarshal([]byte(body), &got))
 	assert.Equal(t, system.StatusDegraded, got.Status)
 

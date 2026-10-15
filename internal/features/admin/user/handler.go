@@ -59,8 +59,8 @@ func (h *Handler) ExportUsers(c fiber.Ctx) error {
 		return err
 	}
 
-	c.Set("Content-Disposition", `attachment; filename="users.xlsx"`)
-	c.Set("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+	c.Attachment("users.xlsx")
+	c.Type("xlsx")
 
 	if err := h.service.ExportUsers(c.Context(), query, c); err != nil {
 		return err
@@ -81,7 +81,7 @@ func (h *Handler) ExportUsers(c fiber.Ctx) error {
 // @x-order      2
 // @Router       /admin/users/{id} [get]
 func (h *Handler) GetUser(c fiber.Ctx) error {
-	var params GetUserPathParams
+	var params UserPathParams
 	if err := c.Bind().URI(&params); err != nil {
 		return err
 	}
@@ -132,7 +132,7 @@ func (h *Handler) CreateUser(c fiber.Ctx) error {
 // @x-order      4
 // @Router       /admin/users/{id} [patch]
 func (h *Handler) UpdateUser(c fiber.Ctx) error {
-	var params UpdateUserPathParams
+	var params UserPathParams
 	if err := c.Bind().URI(&params); err != nil {
 		return err
 	}
@@ -162,7 +162,7 @@ func (h *Handler) UpdateUser(c fiber.Ctx) error {
 // @x-order      5
 // @Router       /admin/users/{id} [delete]
 func (h *Handler) DeleteUser(c fiber.Ctx) error {
-	var params DeleteUserPathParams
+	var params UserPathParams
 	if err := c.Bind().URI(&params); err != nil {
 		return err
 	}

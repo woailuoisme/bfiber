@@ -34,9 +34,9 @@ func NewHandler(service *Service) *Handler {
 // @x-order      1
 // @Router       /realtime/token [get]
 func (h *Handler) GetToken(c fiber.Ctx) error {
-	id, ok := authentication.FromContext(c.Context())
-	if !ok {
-		return errs.Unauthorized(errs.CodeAuthTokenInvalid, "Authentication is required")
+	id, err := authentication.RequireIdentity(c.Context())
+	if err != nil {
+		return err
 	}
 
 	res, err := h.service.IssueToken(c.Context(), id.UserID, id.Role)
@@ -62,8 +62,8 @@ func (h *Handler) ProxySubscribe(c fiber.Ctx) error {
 
 	// 签名头优先读取 X-Centrifugo-Signature 或 X-Signature
 	sig := cmp.Or(
-		c.Get(platformRealtime.CentrifugoSignatureHeader),
-		c.Get(platformRealtime.CentrifugoSignatureLegacyHeader),
+		fiber.GetReqHeader[string](c, platformRealtime.CentrifugoSignatureHeader),
+		fiber.GetReqHeader[string](c, platformRealtime.CentrifugoSignatureLegacyHeader),
 	)
 
 	resp, err := h.service.AuthorizeSubscribe(c.Context(), body, sig)

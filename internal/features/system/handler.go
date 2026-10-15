@@ -28,16 +28,6 @@ func NewHandler(service *Service, logger *zap.Logger) *Handler {
 	return &Handler{service: service, logger: logger}
 }
 
-// Index 处理 GET / 根路径请求。
-func (h *Handler) Index(c fiber.Ctx) error {
-	return h.Liveness(c)
-}
-
-// Liveness 处理 GET /livez 存活探针请求。
-func (h *Handler) Liveness(c fiber.Ctx) error {
-	return response.OK(c, HealthResource{Status: StatusOK})
-}
-
 // Readiness 处理 GET /readyz 就绪探针请求：并发探测各依赖，关键项失败返回 503，非关键项失败返回 200 degraded。
 func (h *Handler) Readiness(c fiber.Ctx) error {
 	ctx, cancel := context.WithTimeout(c.Context(), probeTimeout)

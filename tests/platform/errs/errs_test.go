@@ -492,3 +492,45 @@ func TestOopsFields(t *testing.T) {
 		assert.Equal(t, msgInternal, extractValue(fields[0]))
 	})
 }
+
+// TestPanicError 验证 PanicError 实体与 AsPanic 提取契约。
+func TestPanicError(t *testing.T) {
+	panicErr := errs.NewPanicError("out of bounds memory access", "goroutine 1 [running]:\nmain.go:42")
+	require.NotNil(t, panicErr)
+	assert.Equal(t, "panic: out of bounds memory access", panicErr.Error())
+	assert.Equal(t, "out of bounds memory access", panicErr.Value)
+	assert.Equal(t, "goroutine 1 [running]:\nmain.go:42", panicErr.Stack)
+
+	extracted, ok := errs.AsPanic(panicErr)
+	assert.True(t, ok)
+	assert.Equal(t, panicErr, extracted)
+
+	_, notOk := errs.AsPanic(errors.New("standard error"))
+	assert.False(t, notOk)
+
+	// 验证 Map 契约：PanicError 必须映射为 500 与 CodeInternal，且脱敏通用提示
+	status, resp := errs.Map(panicErr)
+	assert.Equal(t, http.StatusInternalServerError, status)
+	assert.Equal(t, string(errs.CodeInternal), resp.Code)
+	assert.Equal(t, msgInternal, resp.Message)
+}
+
+// TestRender_PanicError 验证 Render 在接收到 PanicError 时的输出结构。
+func TestRender_PanicError(t *testing.T) {
+	app := fiber.New()
+	app.Get("/panic-render", func(c fiber.Ctx) error {
+		panicErr := errs.NewPanicError("simulated runtime panic", "goroutine 1 [running]:\n...")
+		return errs.Render(c, panicErr)
+	})
+
+	req := httptest.NewRequest(http.MethodGet, "/panic-render", nil)
+	resp, err := app.Test(req, fiber.TestConfig{Timeout: 0})
+	require.NoError(t, err)
+
+	assert.Equal(t, http.StatusInternalServerError, resp.StatusCode)
+	var respBody errs.Response
+	unmarshalErr := json.NewDecoder(resp.Body).Decode(&respBody)
+	require.NoError(t, unmarshalErr)
+	assert.Equal(t, msgInternal, respBody.Message)
+	assert.Equal(t, string(errs.CodeInternal), respBody.Code)
+}

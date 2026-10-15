@@ -13,7 +13,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"bfiber/internal/middleware/global"
+	"bfiber/internal/middleware"
 	"bfiber/internal/platform/errs"
 	"bfiber/internal/platform/logger"
 )
@@ -28,7 +28,7 @@ func TestAccessLog404SingleWarn(t *testing.T) {
 		logger.WithWriter(&buf),
 	)
 
-	mw := global.New(global.Deps{Logger: testLogger})
+	mw := middleware.New(middleware.Deps{Logger: testLogger})
 	app := fiber.New(fiber.Config{
 		ErrorHandler: mw.ErrorHandler(),
 	})
@@ -84,7 +84,7 @@ func TestAccessLog500ErrorWithStack(t *testing.T) {
 		logger.WithWriter(&buf),
 	)
 
-	mw := global.New(global.Deps{Logger: testLogger})
+	mw := middleware.New(middleware.Deps{Logger: testLogger})
 	app := fiber.New(fiber.Config{
 		ErrorHandler: mw.ErrorHandler(),
 	})
@@ -136,7 +136,7 @@ func TestAccessLog_ProbeSilencing(t *testing.T) {
 		logger.WithWriter(&buf),
 	)
 
-	mw := global.New(global.Deps{Logger: testLogger})
+	mw := middleware.New(middleware.Deps{Logger: testLogger})
 	app := fiber.New(fiber.Config{
 		ErrorHandler: mw.ErrorHandler(),
 	})
@@ -188,14 +188,14 @@ func TestAccessLog_ProbeSilencing(t *testing.T) {
 // 会在 fiber.Ctx.Locals 注入染色标记 sentry_reported = true，避免后续 ErrorHandler 二次重复上报。
 func TestObservability_Recovery_MarksSentryReported(t *testing.T) {
 	var reported bool
-	mw := global.New(global.Deps{})
+	mw := middleware.New(middleware.Deps{})
 	app := fiber.New(fiber.Config{
 		ErrorHandler: mw.ErrorHandler(),
 	})
 	app.Use(
 		func(c fiber.Ctx) error {
 			err := c.Next()
-			reported = global.IsSentryReported(c)
+			reported = middleware.IsSentryReported(c)
 			return err
 		},
 		mw.Recovery(),
@@ -215,18 +215,18 @@ func TestObservability_Recovery_MarksSentryReported(t *testing.T) {
 
 // TestGlobal_SentryReportedHelpers 验证上下文染色辅助函数的安全边界与判断逻辑。
 func TestGlobal_SentryReportedHelpers(t *testing.T) {
-	assert.False(t, global.IsSentryReported(nil))
+	assert.False(t, middleware.IsSentryReported(nil))
 
 	app := fiber.New()
 	app.Get("/test-sentry-helper", func(c fiber.Ctx) error {
-		assert.False(t, global.IsSentryReported(c))
+		assert.False(t, middleware.IsSentryReported(c))
 
-		global.MarkSentryReported(c)
-		assert.True(t, global.IsSentryReported(c))
+		middleware.MarkSentryReported(c)
+		assert.True(t, middleware.IsSentryReported(c))
 
 		// 重复标记幂等
-		global.MarkSentryReported(c)
-		assert.True(t, global.IsSentryReported(c))
+		middleware.MarkSentryReported(c)
+		assert.True(t, middleware.IsSentryReported(c))
 		return c.SendStatus(fiber.StatusOK)
 	})
 

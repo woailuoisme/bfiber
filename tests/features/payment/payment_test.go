@@ -17,7 +17,7 @@ import (
 
 	"bfiber/internal/config"
 	featurePayment "bfiber/internal/features/payment"
-	"bfiber/internal/middleware/global"
+	"bfiber/internal/middleware"
 	platformPayment "bfiber/internal/platform/payment"
 	"bfiber/internal/platform/payment/enums"
 )
@@ -44,7 +44,7 @@ func setupPaymentTest(t *testing.T) (*fiber.App, *featurePayment.Service, *platf
 	handler := featurePayment.NewHandler(svc)
 
 	app := fiber.New(fiber.Config{
-		ErrorHandler: global.New(global.Deps{}).ErrorHandler(),
+		ErrorHandler: middleware.New(middleware.Deps{}).ErrorHandler(),
 	})
 	v1 := app.Group("/v1")
 	featurePayment.RegisterRoutes(v1, handler, nil)

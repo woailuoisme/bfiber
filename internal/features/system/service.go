@@ -16,6 +16,7 @@ const (
 	ComponentImgproxy = ready.ComponentImgproxy
 	ComponentMailer   = ready.ComponentMailer
 	ComponentTemporal = ready.ComponentTemporal
+	ComponentInfluxDB = ready.ComponentInfluxDB
 )
 
 // Pinger 定义组件可达性探测接口。
@@ -31,6 +32,7 @@ type Deps struct {
 	Imgproxy Pinger
 	Mailer   Pinger
 	Temporal Pinger
+	InfluxDB Pinger
 }
 
 // Service 协调调度底层 ready.Aggregator 评估实例能否接流量。
@@ -73,6 +75,7 @@ func NewService(deps Deps) *Service {
 		{ComponentImgproxy, deps.Imgproxy, ""},
 		{ComponentMailer, deps.Mailer, ""},
 		{ComponentTemporal, deps.Temporal, "temporal"},
+		{ComponentInfluxDB, deps.InfluxDB, "influxdb3"},
 	}
 	for _, c := range optional {
 		if c.pinger != nil {

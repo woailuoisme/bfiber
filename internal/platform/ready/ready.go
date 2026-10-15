@@ -17,6 +17,7 @@ const (
 	ComponentImgproxy = "imgproxy"
 	ComponentMailer   = "mailer"
 	ComponentTemporal = "temporal"
+	ComponentInfluxDB = "influxdb"
 )
 
 // ErrProbeNotConfigured 表示探测实例未注入或未初始化。

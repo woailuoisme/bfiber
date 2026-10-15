@@ -28,8 +28,3 @@ type ReadinessResource = ready.Result
 
 // ComponentCheck 是单个依赖的探测状态元信息，完全兼容 ready.ComponentStatus。
 type ComponentCheck = ready.ComponentStatus
-
-type (
-	HealthResponse    = HealthResource
-	ReadinessResponse = ReadinessResource
-)

@@ -113,6 +113,14 @@ func NewJWTCodec(secret []byte, issuer string, accessTTL, refreshTTL time.Durati
 	}
 }
 
+// Secret 返回底层签名密钥的防御性拷贝。
+func (c *JWTCodec) Secret() []byte {
+	if c == nil {
+		return nil
+	}
+	return bytes.Clone(c.secret)
+}
+
 // IssuePair 签发访问令牌与刷新令牌对。
 func (c *JWTCodec) IssuePair(userID, role string, accessTTL, refreshTTL time.Duration, customClaims map[string]any) (TokenPair, error) {
 	now := time.Now().UTC()
@@ -236,6 +244,14 @@ func (i *TokenIssuer) Parse(raw, wantType string) (*Claims, error) {
 	return i.codec.Parse(raw, wantType)
 }
 
+// Secret 返回底层编解码器持有的签名密钥拷贝。
+func (i *TokenIssuer) Secret() []byte {
+	if i == nil || i.codec == nil {
+		return nil
+	}
+	return i.codec.Secret()
+}
+
 // Revoke 将令牌加入黑名单。
 func (i *TokenIssuer) Revoke(ctx context.Context, claims *Claims) error {
 	if claims == nil {
@@ -284,11 +300,10 @@ func (i *TokenIssuer) IsTokenRevoked(ctx context.Context, claims *Claims) (bool,
 	return i.blacklist.IsRevoked(ctx, claims)
 }
 
-// AuthenticateToken 校验原始访问令牌、检查黑名单并将解析出的 Identity 注入请求上下文。
-func (i *TokenIssuer) AuthenticateToken(ctx context.Context, rawToken string) (context.Context, *Claims, error) {
-	claims, err := i.Parse(rawToken, TypeAccess)
-	if err != nil {
-		return ctx, nil, err
+// AuthenticateClaims 基于已解析并校验签名的 Claims 检查黑名单并将 Identity 注入请求上下文。
+func (i *TokenIssuer) AuthenticateClaims(ctx context.Context, claims *Claims) (context.Context, *Claims, error) {
+	if claims == nil || claims.Type != TypeAccess {
+		return ctx, nil, errs.Unauthorized(errs.CodeAuthTokenInvalid, "The token is invalid")
 	}
 
 	if i.blacklist != nil {

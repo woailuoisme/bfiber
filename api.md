@@ -106,7 +106,7 @@ Authorization: Bearer <your_access_token>
 | **`If-None-Match`**   | 可选 | 条件读取：资源未变化时返回 `304 Not Modified`，节省带宽 | `W/"019572d4a6c878b1"`                 |
 
 > 本 API 只使用 `application/json`：不实现 415/406 内容协商——`Accept` 与 `Content-Type` 不匹配不会单独报错，请求体结构有问题时仍返回 400。
-> 服务端已启用透明 `compress` 中间件，客户端携带 `Accept-Encoding: gzip, br` 时自动执行动态压缩。
+> 响应体透明动态压缩（Gzip / Brotli / Zstd）及浏览器安全标头（HSTS / nosniff 等）由前置网关（Caddy / Traefik / Nginx）统一处理，避免在 Go 应用层占用额外 GC 与 CPU 开销。
 
 ### 3.3 幂等请求 (Idempotency)
 

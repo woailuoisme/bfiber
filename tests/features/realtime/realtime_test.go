@@ -170,7 +170,7 @@ func TestHandlerHTTP(t *testing.T) {
 		w := serveHTTP(app, req)
 
 		require.Equal(t, http.StatusOK, w.Code)
-		var res featureRealtime.TokenResponse
+		var res featureRealtime.TokenResource
 		require.NoError(t, json.Unmarshal(w.Body.Bytes(), &res))
 		assert.NotEmpty(t, res.Token)
 		assert.Equal(t, cfg.Realtime.URL, res.WSURL)

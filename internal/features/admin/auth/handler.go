@@ -6,7 +6,6 @@ import (
 	"bfiber/internal/platform/authentication"
 	"bfiber/internal/platform/errs"
 	"bfiber/internal/platform/response"
-	"bfiber/internal/platform/validator"
 )
 
 // Handler 是管理员认证的 HTTP 适配层。
@@ -55,9 +54,9 @@ func (h *Handler) SignInEmail(c fiber.Ctx) error {
 // @x-order      2
 // @Router       /admin/auth/get-session [get]
 func (h *Handler) GetSession(c fiber.Ctx) error {
-	id, ok := authentication.FromContext(c.Context())
-	if !ok {
-		return errs.Unauthorized(errs.CodeAuthTokenInvalid, "Authentication is required")
+	id, err := authentication.RequireIdentity(c.Context())
+	if err != nil {
+		return err
 	}
 
 	res, err := h.service.GetSession(c.Context(), id.UserID)
@@ -109,8 +108,10 @@ func (h *Handler) SignOut(c fiber.Ctx) error {
 	}
 
 	var body SignOutBody
-	if err := validator.BindOptionalJSON(c, &body); err != nil {
-		return err
+	if len(c.Body()) > 0 {
+		if err := c.Bind().Body(&body); err != nil {
+			return err
+		}
 	}
 
 	if err := h.service.SignOut(c.Context(), body); err != nil {
@@ -132,9 +133,9 @@ func (h *Handler) SignOut(c fiber.Ctx) error {
 // @x-order      5
 // @Router       /admin/auth/change-password [post]
 func (h *Handler) ChangePassword(c fiber.Ctx) error {
-	id, ok := authentication.FromContext(c.Context())
-	if !ok {
-		return errs.Unauthorized(errs.CodeAuthTokenInvalid, "Authentication is required")
+	id, err := authentication.RequireIdentity(c.Context())
+	if err != nil {
+		return err
 	}
 
 	var body ChangePasswordBody

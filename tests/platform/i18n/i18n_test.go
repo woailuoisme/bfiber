@@ -2,9 +2,14 @@
 package i18n_test
 
 import (
+	"context"
+	"io"
+	"net/http"
 	"testing"
 	"testing/fstest"
 
+	"github.com/gofiber/fiber/v3"
+	goi18n "github.com/nicksnyder/go-i18n/v2/i18n"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
@@ -240,4 +245,54 @@ func TestNewWithFS(t *testing.T) {
 	assert.Equal(t, "Hello, Bob!", translator.T("en", "messages.hello", map[string]string{"Name": "Bob"}))
 	assert.Equal(t, "你好，张三！", translator.T("zh-CN", "messages.hello", map[string]string{"Name": "张三"}))
 	assert.Equal(t, "Hello, Bob!", translator.T("fr-FR", "messages.hello", map[string]string{"Name": "Bob"}))
+}
+
+// TestTranslator_FiberContribLocalize 验证 Fiber v3 官方 contrib/i18n 的 Localize 与 MustLocalize 集成。
+func TestTranslator_FiberContribLocalize(t *testing.T) {
+	translator := newTranslator(t, "en")
+	require.NotNil(t, translator.Fiber())
+
+	app := fiber.New()
+	app.Get("/localize", func(c fiber.Ctx) error {
+		msg, err := translator.Localize(c, &goi18n.LocalizeConfig{
+			MessageID:    "validation.required",
+			TemplateData: map[string]string{"Field": "email"},
+		})
+		if err != nil {
+			return err
+		}
+		return c.SendString(msg)
+	})
+
+	app.Get("/must-localize", func(c fiber.Ctx) error {
+		msg := translator.MustLocalize(c, "invoice.title")
+		return c.SendString(msg)
+	})
+
+	// 1. 英文请求验证 Localize
+	reqEn, _ := http.NewRequestWithContext(context.Background(), http.MethodGet, "/localize", nil)
+	reqEn.Header.Set("Accept-Language", "en")
+	respEn, err := app.Test(reqEn)
+	require.NoError(t, err)
+	defer func() { _ = respEn.Body.Close() }()
+	bodyEn, _ := io.ReadAll(respEn.Body)
+	assert.Equal(t, "The email field is required.", string(bodyEn))
+
+	// 2. 中文请求验证 Localize
+	reqZh, _ := http.NewRequestWithContext(context.Background(), http.MethodGet, "/localize", nil)
+	reqZh.Header.Set("Accept-Language", "zh-CN")
+	respZh, err := app.Test(reqZh)
+	require.NoError(t, err)
+	defer func() { _ = respZh.Body.Close() }()
+	bodyZh, _ := io.ReadAll(respZh.Body)
+	assert.Equal(t, "email为必填项。", string(bodyZh))
+
+	// 3. 中文请求验证 MustLocalize
+	reqMustZh, _ := http.NewRequestWithContext(context.Background(), http.MethodGet, "/must-localize", nil)
+	reqMustZh.Header.Set("Accept-Language", "zh-CN")
+	respMustZh, err := app.Test(reqMustZh)
+	require.NoError(t, err)
+	defer func() { _ = respMustZh.Body.Close() }()
+	bodyMustZh, _ := io.ReadAll(respMustZh.Body)
+	assert.Equal(t, "电子发票 / 结算凭据", string(bodyMustZh))
 }

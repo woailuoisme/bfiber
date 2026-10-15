@@ -27,9 +27,3 @@ type SubscribeResult = platformRealtime.SubscribeResult
 
 // ProxyError 为 Centrifugo HTTP Proxy 错误结构别名。
 type ProxyError = platformRealtime.ProxyError
-
-type (
-	TokenResponse     = TokenResource
-	SubscribeRequest  = SubscribeBody
-	SubscribeResponse = SubscribeResource
-)

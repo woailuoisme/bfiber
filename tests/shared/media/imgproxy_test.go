@@ -2,7 +2,10 @@
 package media_test
 
 import (
+	"context"
 	"encoding/hex"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 
@@ -103,5 +106,43 @@ func TestImgproxyClient_ReadyContract(t *testing.T) {
 		c := media.NewImageClient(cfg)
 		assert.Equal(t, "imgproxy", c.Driver())
 		assert.True(t, c.Enabled())
+	})
+}
+
+func TestImgproxyClient_CheckHealth(t *testing.T) {
+	t.Run("服务正常响应 imgproxy is running 返回成功", func(t *testing.T) {
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			assert.Equal(t, "/health", r.URL.Path)
+			assert.Equal(t, "bfiber-imgproxy-client", r.Header.Get("User-Agent"))
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte("imgproxy is running"))
+		}))
+		defer server.Close()
+
+		cfg := config.ImgproxyConfig{
+			BaseURL: server.URL,
+			Enabled: true,
+		}
+		c := media.NewImageClient(cfg)
+		err := c.CheckHealth(context.Background())
+		require.NoError(t, err)
+		assert.NoError(t, c.Ping(context.Background()))
+		assert.NoError(t, c.HealthCheck())
+	})
+
+	t.Run("服务端非 200 返回错误", func(t *testing.T) {
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			w.WriteHeader(http.StatusServiceUnavailable)
+		}))
+		defer server.Close()
+
+		cfg := config.ImgproxyConfig{
+			BaseURL: server.URL,
+			Enabled: true,
+		}
+		c := media.NewImageClient(cfg)
+		err := c.CheckHealth(context.Background())
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "HTTP 503")
 	})
 }

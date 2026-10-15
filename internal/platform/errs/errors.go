@@ -3,6 +3,7 @@ package errs
 import (
 	"cmp"
 	"errors"
+	"fmt"
 
 	"github.com/gofiber/fiber/v3"
 	"github.com/samber/oops"
@@ -181,4 +182,25 @@ func Stack(err error) string {
 		return oopsErr.Stacktrace()
 	}
 	return ""
+}
+
+// PanicError 描述捕获的运行时恐慌及其调用堆栈信息。
+type PanicError struct {
+	Value any
+	Stack string
+}
+
+// Error 实现 error 接口。
+func (p *PanicError) Error() string {
+	return fmt.Sprintf("panic: %v", p.Value)
+}
+
+// NewPanicError 构造包含恐慌对象与调用堆栈的 PanicError。
+func NewPanicError(v any, stack string) *PanicError {
+	return &PanicError{Value: v, Stack: stack}
+}
+
+// AsPanic 判断并提取错误链中的 PanicError。
+func AsPanic(err error) (*PanicError, bool) {
+	return errors.AsType[*PanicError](err)
 }

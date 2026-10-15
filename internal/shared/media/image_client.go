@@ -21,7 +21,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/go-resty/resty/v2"
+	fiberClient "github.com/gofiber/fiber/v3/client"
 	"github.com/samber/lo"
 	"github.com/samber/oops"
 	_ "golang.org/x/image/webp"
@@ -206,7 +206,7 @@ type client struct {
 	insecure   bool
 	config     config.ImgproxyConfig
 	storageCfg config.StorageConfig
-	httpClient *resty.Client
+	httpClient *fiberClient.Client
 }
 
 // NewImageClient 创建并初始化基于 imgproxy 的图像服务客户端。
@@ -230,9 +230,9 @@ func NewWithStorage(imgCfg config.ImgproxyConfig, storageCfg config.StorageConfi
 
 	trimmedURL := cmp.Or(strings.TrimRight(strings.TrimSpace(baseURL), "/"), "http://localhost:8088")
 
-	restyClient := resty.New().
-		SetTimeout(2*time.Second).
-		SetHeader("User-Agent", "bfiber-imgproxy-client")
+	fc := fiberClient.New().
+		SetTimeout(2 * time.Second).
+		SetUserAgent("bfiber-imgproxy-client")
 
 	return &client{
 		baseURL:    trimmedURL,
@@ -241,7 +241,7 @@ func NewWithStorage(imgCfg config.ImgproxyConfig, storageCfg config.StorageConfi
 		insecure:   mergedCfg.Insecure || len(keyBytes) == 0 || len(saltBytes) == 0,
 		config:     mergedCfg,
 		storageCfg: storageCfg,
-		httpClient: restyClient,
+		httpClient: fc,
 	}
 }
 
@@ -348,6 +348,7 @@ func (s *client) CheckHealth(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("imgproxy unreachable: %w", err)
 	}
+	defer fiberClient.ReleaseResponse(resp)
 
 	if resp.StatusCode() != http.StatusOK {
 		return fmt.Errorf("imgproxy /health returned HTTP %d", resp.StatusCode())

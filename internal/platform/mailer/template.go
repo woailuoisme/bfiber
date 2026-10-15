@@ -1,4 +1,3 @@
-// Package mailer 包含邮件模板渲染与主题注入基础设施。
 package mailer
 
 import (

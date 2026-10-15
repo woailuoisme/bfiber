@@ -12,7 +12,9 @@ import (
 	"strings"
 	"time"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/uptrace/bun"
+	"github.com/uptrace/bun/extra/bunotel"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 
@@ -100,7 +102,17 @@ func AddQueryHooks(db *bun.DB, cfg config.DatabaseConfig) *bun.DB {
 	if db == nil {
 		return nil
 	}
-	return db.WithQueryHook(NewOTelQueryHook()).
+	var dbName string
+	if parsed, err := pgx.ParseConfig(cfg.URL); err == nil && parsed != nil {
+		dbName = parsed.Database
+	}
+	opts := []bunotel.Option{
+		bunotel.WithFormattedQueries(true),
+	}
+	if dbName != "" {
+		opts = append(opts, bunotel.WithDBName(dbName))
+	}
+	return db.WithQueryHook(bunotel.NewQueryHook(opts...)).
 		WithQueryHook(NewZapQueryHook(cfg.SlowThreshold, cfg.Debug))
 }
 

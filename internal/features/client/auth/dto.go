@@ -160,21 +160,3 @@ func projectUser(u *models.User) UserResource {
 		UpdatedAt:       u.UpdatedAt.UTC(),
 	}
 }
-
-type (
-	UserProjection              = UserResource
-	SignUpEmailRequest          = SignUpEmailBody
-	SignInEmailRequest          = SignInEmailBody
-	SignInUsernameRequest       = SignInUsernameBody
-	SignOutRequest              = SignOutBody
-	RefreshTokenRequest         = RefreshTokenBody
-	ChangePasswordRequest       = ChangePasswordBody
-	ForgetPasswordRequest       = ForgetPasswordBody
-	RequestPasswordResetRequest = RequestPasswordResetBody
-	ResetPasswordRequest        = ResetPasswordBody
-	SendVerificationOTPRequest  = SendVerificationOTPBody
-	VerifyEmailRequest          = VerifyEmailBody
-	SessionResponse             = SessionResource
-	GetSessionResponse          = GetSessionResource
-	StatusResponse              = StatusResource
-)

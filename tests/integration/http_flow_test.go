@@ -28,11 +28,11 @@ func TestHealthEndpoint(t *testing.T) {
 
 	result := call(t, engine, http.MethodGet, "/livez", "", "")
 	assert.Equal(t, http.StatusOK, result.Status)
-	assert.Equal(t, "ok", str(result.Body, "status"))
+	assert.Equal(t, "OK", str(result.Body, "status"))
 
 	rootResult := call(t, engine, http.MethodGet, "/", "", "")
 	assert.Equal(t, http.StatusOK, rootResult.Status)
-	assert.Equal(t, "ok", str(rootResult.Body, "status"))
+	assert.Equal(t, "OK", str(rootResult.Body, "status"))
 }
 
 // TestGlobalRoutingAndErrorContract 校验未映射路由与未支持动词返回统一错误 JSON（api.md 5.2）。

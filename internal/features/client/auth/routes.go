@@ -11,21 +11,22 @@ import (
 func RegisterRoutes(router fiber.Router, handler *Handler, mw *middleware.Middleware) {
 	group := router.Group("/auth")
 
-	// 敏感端点：通过语义化子路由统一级联敏感配额限流中间件。
-	sensitive := group.Group("", mw.Throttle(middleware.TierSensitive))
-	sensitive.Post("/sign-up/email", handler.SignUpEmail)
-	sensitive.Post("/sign-in/email", handler.SignInEmail)
-	sensitive.Post("/sign-in/username", handler.SignInUsername)
-	sensitive.Post("/token/refresh", handler.Refresh)
-	sensitive.Post("/send-verification-otp", handler.SendVerificationOTP)
-	sensitive.Post("/verify-email", handler.VerifyEmail)
-	sensitive.Post("/forget-password", handler.ForgetPassword)
-	sensitive.Post("/request-password-reset", handler.RequestPasswordReset)
-	sensitive.Post("/reset-password", handler.ResetPassword)
+	// 敏感端点：级联敏感配额限流中间件。
+	sensitive := mw.Throttle(middleware.TierSensitive)
+	group.Post("/sign-up/email", sensitive, handler.SignUpEmail).Name("auth.signup.email")
+	group.Post("/sign-in/email", sensitive, handler.SignInEmail).Name("auth.signin.email")
+	group.Post("/sign-in/username", sensitive, handler.SignInUsername).Name("auth.signin.username")
+	group.Post("/token/refresh", sensitive, handler.Refresh).Name("auth.token.refresh")
+	group.Post("/send-verification-otp", sensitive, handler.SendVerificationOTP).Name("auth.otp.send")
+	group.Post("/verify-email", sensitive, handler.VerifyEmail).Name("auth.email.verify")
+	group.Post("/forget-password", sensitive, handler.ForgetPassword).Name("auth.password.forget")
+	group.Post("/request-password-reset", sensitive, handler.RequestPasswordReset).Name("auth.password.request_reset")
+	group.Post("/reset-password", sensitive, handler.ResetPassword).Name("auth.password.reset")
 
-	// 需鉴权端点：通过语义化子路由统一级联已认证配额与身份校验中间件。
-	protected := group.Group("", mw.Auth("client"), mw.Throttle(middleware.TierAuthenticated))
-	protected.Get("/get-session", handler.GetSession)
-	protected.Post("/sign-out", handler.SignOut)
-	protected.Post("/change-password", handler.ChangePassword)
+	// 需鉴权端点：级联已认证配额与身份校验中间件。
+	authGuard := mw.Auth("client")
+	authThrottle := mw.Throttle(middleware.TierAuthenticated)
+	group.Get("/get-session", authGuard, authThrottle, handler.GetSession).Name("auth.session.get")
+	group.Post("/sign-out", authGuard, authThrottle, handler.SignOut).Name("auth.signout")
+	group.Post("/change-password", authGuard, authThrottle, handler.ChangePassword).Name("auth.password.change")
 }

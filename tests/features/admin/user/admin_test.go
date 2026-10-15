@@ -11,8 +11,8 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"bfiber/internal/database/models"
 	admin "bfiber/internal/features/admin/user"
-	"bfiber/internal/shared/user"
 )
 
 // api.md 6.1 规定的分页默认值与上限。
@@ -41,7 +41,7 @@ func TestNormaliseSortUsesWhitelist(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			assert.Equal(t, tt.want, user.NormaliseSort(tt.raw))
+			assert.Equal(t, tt.want, models.NormaliseUserSort(tt.raw))
 		})
 	}
 }
@@ -68,7 +68,7 @@ func TestPaginationContract(t *testing.T) {
 	assert.Equal(t, 50, pageSize)
 
 	// 请求结构体允许省略分页字段，交由服务层收敛。
-	var query admin.ListUsersQuery
+	var query admin.ListUsersQueryParams
 	require.NoError(t, json.Unmarshal([]byte(`{}`), &query))
 	assert.Zero(t, query.Page)
 	assert.Zero(t, query.PageSize)
@@ -76,8 +76,8 @@ func TestPaginationContract(t *testing.T) {
 
 // TestListUsersQueryAcceptsCompoundSort 校验查询参数结构体允许复合排序表达式。
 func TestListUsersQueryAcceptsCompoundSort(t *testing.T) {
-	var query admin.ListUsersQuery
+	var query admin.ListUsersQueryParams
 	require.NoError(t, json.Unmarshal([]byte(`{"sort":"-createdAt,email"}`), &query))
 	assert.Equal(t, "-createdAt,email", query.Sort)
-	assert.Equal(t, []string{"u.created_at DESC", "u.email ASC"}, user.NormaliseSort(query.Sort))
+	assert.Equal(t, []string{"u.created_at DESC", "u.email ASC"}, models.NormaliseUserSort(query.Sort))
 }

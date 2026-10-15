@@ -1,4 +1,4 @@
-package global
+package middleware
 
 import (
 	"cmp"
@@ -8,6 +8,7 @@ import (
 	fiberSentry "github.com/gofiber/contrib/v3/sentry"
 	"github.com/gofiber/fiber/v3"
 
+	"bfiber/internal/platform/errs"
 	platformsentry "bfiber/internal/platform/sentry"
 )
 
@@ -27,7 +28,7 @@ func (m *Middleware) Sentry() fiber.Handler {
 
 	return func(c fiber.Ctx) error {
 		// 对高频系统探针路由忽略 Sentry Hub 装配与事务采样，降低打点开销与内存分配
-		if isProbePath(c.Path()) || (c.Route() != nil && isProbePath(c.Route().Path)) {
+		if isProbeRequest(c) {
 			return c.Next()
 		}
 
@@ -37,7 +38,7 @@ func (m *Middleware) Sentry() fiber.Handler {
 		if hub := fiberSentry.GetHubFromContext(c); hub != nil {
 			if reqID := cmp.Or(
 				strings.TrimSpace(c.GetRespHeader(headerRequestID)),
-				strings.TrimSpace(c.Get(headerRequestID)),
+				strings.TrimSpace(fiber.GetReqHeader[string](c, headerRequestID)),
 			); reqID != "" {
 				hub.Scope().SetTag("request_id", reqID)
 			}
@@ -57,7 +58,7 @@ const SentryReportedKey = "sentry_reported"
 // MarkSentryReported 标记当前请求已向 Sentry / GlitchTip 上报过异常，避免重复告警。
 func MarkSentryReported(c fiber.Ctx) {
 	if c != nil {
-		c.Locals(SentryReportedKey, true)
+		fiber.Locals(c, SentryReportedKey, true)
 	}
 }
 
@@ -66,8 +67,7 @@ func IsSentryReported(c fiber.Ctx) bool {
 	if c == nil {
 		return false
 	}
-	reported, _ := c.Locals(SentryReportedKey).(bool)
-	return reported
+	return fiber.Locals[bool](c, SentryReportedKey)
 }
 
 // captureHTTPError 向 Sentry / GlitchTip 上报 5xx 服务端错误（过滤正常 4xx 业务与入参校验错误）。
@@ -79,6 +79,9 @@ func captureHTTPError(c fiber.Ctx, err error) {
 		return
 	}
 	if IsSentryReported(c) {
+		return
+	}
+	if _, ok := errs.AsPanic(err); ok {
 		return
 	}
 	MarkSentryReported(c)

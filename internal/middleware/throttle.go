@@ -1,9 +1,7 @@
 package middleware
 
 import (
-	"context"
 	"strconv"
-	"sync/atomic"
 	"time"
 
 	"github.com/gofiber/fiber/v3"
@@ -103,10 +101,10 @@ func (m *Middleware) resolveLimiterStorage() fiber.Storage {
 		return nil
 	}
 	if m.limiterStore != nil {
-		return toFiberStorage(m.limiterStore)
+		return cache.AsFiberStorage(m.limiterStore)
 	}
 	if m.cache != nil {
-		return cache.AsFiberStorage(m.cache, "ratelimit")
+		return cache.AsFiberStorage(m.cache)
 	}
 	return nil
 }
@@ -121,17 +119,14 @@ func ThrottleWithStore(store any, limit int, window time.Duration, opts ...Throt
 		window = rateLimitWindow
 	}
 
-	storage := toFiberStorage(store)
+	storage := cache.AsFiberStorage(store)
 	if storage == nil || limit <= 0 {
 		return func(c fiber.Ctx) error {
 			return c.Next()
 		}
 	}
 
-	failOpenStore := &failOpenStorage{
-		inner:  storage,
-		logger: options.logger,
-	}
+	failOpenStore := cache.FailOpen(storage, options.logger)
 
 	limiterHandler := limiter.New(limiter.Config{
 		LimiterMiddleware: limiter.SlidingWindow{},
@@ -172,6 +167,11 @@ func ThrottleWithStore(store any, limit int, window time.Duration, opts ...Throt
 	return limiterHandler
 }
 
+// ThrottleWithStorage 构造强类型官方 Storage 的平滑滑动窗口限流中间件实例。
+func ThrottleWithStorage(storage fiber.Storage, limit int, window time.Duration, opts ...ThrottleOption) fiber.Handler {
+	return ThrottleWithStore(storage, limit, window, opts...)
+}
+
 // limitFor 按档位读取配额，未知档位回退至未认证配额。
 func (m *Middleware) limitFor(tier Tier) int {
 	if m != nil && !m.limiter.IsEnabled() {
@@ -201,130 +201,4 @@ func scopeKey(tier Tier, c fiber.Ctx) string {
 		return defaultScopeKey(c)
 	}
 	return "ip:" + c.IP()
-}
-
-func toFiberStorage(store any) fiber.Storage {
-	switch s := store.(type) {
-	case fiber.Storage:
-		return s
-	case cache.Store:
-		return cache.AsFiberStorage(s, "ratelimit")
-	default:
-		return nil
-	}
-}
-
-// failOpenStorage 为限流存储提供故障自动降级（Fail-Open）防线，避免缓存故障级联引发 500 异常。
-type failOpenStorage struct {
-	inner       fiber.Storage
-	logger      *zap.Logger
-	lastLogTime atomic.Int64 // 秒级时间戳，用于错误日志限频（5 秒最多输出一次），杜绝高并发下的日志风暴
-}
-
-var _ fiber.Storage = (*failOpenStorage)(nil)
-
-func (s *failOpenStorage) logErr(op string, err error) {
-	if err == nil || s.logger == nil {
-		return
-	}
-	now := time.Now().Unix()
-	last := s.lastLogTime.Load()
-	if now-last >= 5 && s.lastLogTime.CompareAndSwap(last, now) {
-		s.logger.Warn("ratelimit storage error, falling back to fail-open",
-			zap.String("op", op),
-			zap.Error(err),
-		)
-	}
-}
-
-func (s *failOpenStorage) Get(key string) ([]byte, error) {
-	if s.inner == nil {
-		return nil, nil
-	}
-	val, err := s.inner.Get(key)
-	if err != nil {
-		s.logErr("get", err)
-	}
-	return val, nil
-}
-
-func (s *failOpenStorage) GetWithContext(ctx context.Context, key string) ([]byte, error) {
-	if s.inner == nil {
-		return nil, nil
-	}
-	val, err := s.inner.GetWithContext(ctx, key)
-	if err != nil {
-		s.logErr("get_with_context", err)
-	}
-	return val, nil
-}
-
-func (s *failOpenStorage) Set(key string, val []byte, exp time.Duration) error {
-	if s.inner == nil {
-		return nil
-	}
-	if err := s.inner.Set(key, val, exp); err != nil {
-		s.logErr("set", err)
-	}
-	return nil
-}
-
-func (s *failOpenStorage) SetWithContext(ctx context.Context, key string, val []byte, exp time.Duration) error {
-	if s.inner == nil {
-		return nil
-	}
-	if err := s.inner.SetWithContext(ctx, key, val, exp); err != nil {
-		s.logErr("set_with_context", err)
-	}
-	return nil
-}
-
-func (s *failOpenStorage) Delete(key string) error {
-	if s.inner == nil {
-		return nil
-	}
-	if err := s.inner.Delete(key); err != nil {
-		s.logErr("delete", err)
-	}
-	return nil
-}
-
-func (s *failOpenStorage) DeleteWithContext(ctx context.Context, key string) error {
-	if s.inner == nil {
-		return nil
-	}
-	if err := s.inner.DeleteWithContext(ctx, key); err != nil {
-		s.logErr("delete_with_context", err)
-	}
-	return nil
-}
-
-func (s *failOpenStorage) Reset() error {
-	if s.inner == nil {
-		return nil
-	}
-	if err := s.inner.Reset(); err != nil {
-		s.logErr("reset", err)
-	}
-	return nil
-}
-
-func (s *failOpenStorage) ResetWithContext(ctx context.Context) error {
-	if s.inner == nil {
-		return nil
-	}
-	if err := s.inner.ResetWithContext(ctx); err != nil {
-		s.logErr("reset_with_context", err)
-	}
-	return nil
-}
-
-func (s *failOpenStorage) Close() error {
-	if s.inner == nil {
-		return nil
-	}
-	if err := s.inner.Close(); err != nil {
-		s.logErr("close", err)
-	}
-	return nil
 }

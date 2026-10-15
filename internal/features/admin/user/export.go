@@ -8,19 +8,18 @@ import (
 
 	"bfiber/internal/database/models"
 	"bfiber/internal/platform/excel"
-	"bfiber/internal/shared/user"
 )
 
 // UserFetcher 声明按条件分页物理拉取用户实体的抽象契约（ISP），由 models 或函数适配器满足。
 type UserFetcher interface {
-	List(ctx context.Context, filter user.ListFilter, offset, limit int) ([]models.User, error)
+	List(ctx context.Context, filter models.UserListFilter, offset, limit int) ([]models.User, error)
 }
 
 // UserFetchFunc 是 UserFetcher 的函数式适配器。
-type UserFetchFunc func(ctx context.Context, filter user.ListFilter, offset, limit int) ([]models.User, error)
+type UserFetchFunc func(ctx context.Context, filter models.UserListFilter, offset, limit int) ([]models.User, error)
 
 // List 实现 UserFetcher 接口。
-func (f UserFetchFunc) List(ctx context.Context, filter user.ListFilter, offset, limit int) ([]models.User, error) {
+func (f UserFetchFunc) List(ctx context.Context, filter models.UserListFilter, offset, limit int) ([]models.User, error) {
 	return f(ctx, filter, offset, limit)
 }
 
@@ -83,12 +82,12 @@ const defaultUserChunkSize = 500
 type UsersChunkedExport struct {
 	userExportMetadata
 	fetcher   UserFetcher
-	filter    user.ListFilter
+	filter    models.UserListFilter
 	chunkSize int
 }
 
 // NewUsersChunkedExport 创建基于物理分块查询的用户导出器。
-func NewUsersChunkedExport(fetcher UserFetcher, filter user.ListFilter, chunkSize ...int) *UsersChunkedExport {
+func NewUsersChunkedExport(fetcher UserFetcher, filter models.UserListFilter, chunkSize ...int) *UsersChunkedExport {
 	size := defaultUserChunkSize
 	if len(chunkSize) > 0 && chunkSize[0] > 0 {
 		size = chunkSize[0]
@@ -127,7 +126,7 @@ func ExportChunkedStream(
 	ctx context.Context,
 	w io.Writer,
 	fetcher UserFetcher,
-	filter user.ListFilter,
+	filter models.UserListFilter,
 	opts ...excel.ExportOption,
 ) error {
 	size := defaultUserChunkSize

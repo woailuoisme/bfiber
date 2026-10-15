@@ -6,7 +6,6 @@ import (
 	"bfiber/internal/platform/authentication"
 	"bfiber/internal/platform/errs"
 	"bfiber/internal/platform/response"
-	"bfiber/internal/platform/validator"
 )
 
 // Handler 是认证端点的 HTTP 适配层：只做绑定、取身份、调用服务、写响应。
@@ -92,15 +91,6 @@ func (h *Handler) SignInUsername(c fiber.Ctx) error {
 	return response.OK(c, session)
 }
 
-// currentUserID 从请求上下文提取经过守卫认证的当前用户唯一标识。
-func (h *Handler) currentUserID(c fiber.Ctx) (string, error) {
-	id, ok := authentication.FromContext(c.Context())
-	if !ok {
-		return "", errs.Unauthorized(errs.CodeAuthTokenInvalid, "Authentication is required")
-	}
-	return id.UserID, nil
-}
-
 // GetSession 处理 GET /v1/auth/get-session。
 //
 // @Summary      读取当前身份
@@ -112,7 +102,7 @@ func (h *Handler) currentUserID(c fiber.Ctx) (string, error) {
 // @x-order      4
 // @Router       /auth/get-session [get]
 func (h *Handler) GetSession(c fiber.Ctx) error {
-	userID, err := h.currentUserID(c)
+	userID, err := authentication.UserID(c.Context())
 	if err != nil {
 		return err
 	}
@@ -169,8 +159,10 @@ func (h *Handler) SignOut(c fiber.Ctx) error {
 	}
 
 	var body SignOutBody
-	if err := validator.BindOptionalJSON(c, &body); err != nil {
-		return err
+	if len(c.Body()) > 0 {
+		if err := c.Bind().Body(&body); err != nil {
+			return err
+		}
 	}
 
 	if err := h.service.SignOut(c.Context(), body); err != nil {
@@ -192,7 +184,7 @@ func (h *Handler) SignOut(c fiber.Ctx) error {
 // @x-order      9
 // @Router       /auth/change-password [post]
 func (h *Handler) ChangePassword(c fiber.Ctx) error {
-	userID, err := h.currentUserID(c)
+	userID, err := authentication.UserID(c.Context())
 	if err != nil {
 		return err
 	}
@@ -227,7 +219,7 @@ func (h *Handler) ForgetPassword(c fiber.Ctx) error {
 		return err
 	}
 
-	result, err := h.service.ForgetPassword(c.Context(), c.Get("Accept-Language"), body)
+	result, err := h.service.ForgetPassword(c.Context(), fiber.GetReqHeader[string](c, fiber.HeaderAcceptLanguage), body)
 	if err != nil {
 		return err
 	}
@@ -252,7 +244,7 @@ func (h *Handler) RequestPasswordReset(c fiber.Ctx) error {
 		return err
 	}
 
-	result, err := h.service.RequestPasswordReset(c.Context(), c.Get("Accept-Language"), body)
+	result, err := h.service.RequestPasswordReset(c.Context(), fiber.GetReqHeader[string](c, fiber.HeaderAcceptLanguage), body)
 	if err != nil {
 		return err
 	}
@@ -305,7 +297,7 @@ func (h *Handler) SendVerificationOTP(c fiber.Ctx) error {
 		return err
 	}
 
-	result, err := h.service.SendVerificationOTP(c.Context(), c.Get("Accept-Language"), body)
+	result, err := h.service.SendVerificationOTP(c.Context(), fiber.GetReqHeader[string](c, fiber.HeaderAcceptLanguage), body)
 	if err != nil {
 		return err
 	}

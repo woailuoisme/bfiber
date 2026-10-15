@@ -11,7 +11,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"bfiber/internal/middleware/global"
+	"bfiber/internal/middleware"
 	"bfiber/internal/platform/errs"
 )
 
@@ -19,7 +19,7 @@ import (
 // 超限的读取必须拿到 413 REQUEST_TOO_LARGE，
 // 上限之内的请求必须照常通过。
 func TestBodyLimit(t *testing.T) {
-	mw := global.New(global.Deps{})
+	mw := middleware.New(middleware.Deps{})
 
 	newApp := func() *fiber.App {
 		app := fiber.New(fiber.Config{
@@ -34,7 +34,7 @@ func TestBodyLimit(t *testing.T) {
 	}
 
 	t.Run("超过上限返回 413", func(t *testing.T) {
-		// 2 MiB，超过中间件设定的 1 MiB 上限。
+		// 2 MiB，超过设定的 1 MiB 上限。
 		oversized := strings.Repeat("a", 2<<20)
 		req := httptest.NewRequest(http.MethodPost, "/echo", strings.NewReader(oversized))
 		resp, err := newApp().Test(req, fiber.TestConfig{Timeout: 0})

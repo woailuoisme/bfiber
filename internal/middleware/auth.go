@@ -5,34 +5,51 @@ import (
 	"errors"
 	"strings"
 
+	contribcasbin "github.com/gofiber/contrib/v3/casbin/v2"
+	jwtware "github.com/gofiber/contrib/v3/jwt"
 	"github.com/gofiber/fiber/v3"
+	"github.com/gofiber/fiber/v3/extractors"
 
 	"bfiber/internal/platform/authentication"
 	"bfiber/internal/platform/errs"
 	platformsentry "bfiber/internal/platform/sentry"
 )
 
-// Auth 【路由/路由组中间件】仿照 Laravel auth 中间件设计，校验 Bearer 访问令牌并注入认证身份载荷。
-// 支持未指定（使用默认守卫）、单个守卫（如 "client"、"admin"）以及多守卫顺序回退（如 mw.Auth("admin", "client") 或 mw.Auth("admin,client")）。
+// Auth 【路由/路由组中间件】100% 由 Fiber v3 官方 contrib/jwt (jwtware) 驱动，校验 JWT 签名与有效期。
+// 校验通过后由 Guard 校验黑名单并加载用户实体与权限门禁，消除任何手动二次反序列化与冗余验签。
+// 支持未指定（使用默认守卫）、单个守卫（如 "client"、"admin"）以及多守卫顺序回退（如 mw.Auth("admin", "client")）。
 func (m *Middleware) Auth(guardNames ...string) fiber.Handler {
+	if m == nil || m.authManager == nil || (m.tokens == nil && m.signingKey == "") {
+		return func(c fiber.Ctx) error {
+			return errs.Internal(errors.New("middleware: auth manager or tokens not configured"))
+		}
+	}
+
 	guards := parseGuards(guardNames)
 
-	return func(c fiber.Ctx) error {
-		raw, err := bearerToken(c)
+	cfg := m.resolveJWTConfig(nil)
+	cfg.Claims = &authentication.Claims{}
+	cfg.SuccessHandler = func(c fiber.Ctx) error {
+		token := jwtware.FromContext(c)
+		if token == nil || !token.Valid {
+			return errs.Render(c, errs.Unauthorized(errs.CodeAuthTokenInvalid, "Authentication is required"))
+		}
+
+		claims, ok := token.Claims.(*authentication.Claims)
+		if !ok || claims == nil || claims.Subject == "" {
+			return errs.Render(c, errs.Unauthorized(errs.CodeAuthTokenInvalid, "Authentication is required"))
+		}
+
+		reqCtx, err := m.authenticateClaimsWithManager(c.Context(), claims, guards)
 		if err != nil {
 			return err
 		}
 
-		var reqCtx context.Context
-		if m.authManager != nil {
-			reqCtx, err = m.authenticateWithManager(c.Context(), raw, guards)
-		} else {
-			reqCtx, err = m.authenticateFallback(c.Context(), raw, guards)
+		source := fiber.Locals[extractors.Source](c, authTokenProvenanceLocalsKey)
+		if source == 0 {
+			source = extractors.SourceAuthHeader
 		}
-
-		if err != nil {
-			return err
-		}
+		reqCtx = authentication.WithProvenance(reqCtx, source)
 
 		if m.authz != nil {
 			reqCtx = authentication.WithGate(reqCtx, m.authz)
@@ -43,6 +60,8 @@ func (m *Middleware) Auth(guardNames ...string) fiber.Handler {
 
 		return c.Next()
 	}
+
+	return jwtware.New(cfg)
 }
 
 // enrichSentryUser 将已认证用户身份与角色元信息同步绑定至 Sentry / GlitchTip 请求级作用域。
@@ -63,14 +82,14 @@ func enrichSentryUser(c fiber.Ctx, reqCtx context.Context) {
 	platformsentry.SetTag(reqCtx, "role", id.Role)
 }
 
-// authenticateWithManager 基于注入的 AuthManager 解析守卫并验证令牌，支持多守卫顺序降级匹配。
-func (m *Middleware) authenticateWithManager(ctx context.Context, raw string, guards []string) (context.Context, error) {
+// authenticateClaimsWithManager 基于注入的 AuthManager 解析守卫并验证已解析的 Claims，消除重复验签与反序列化。
+func (m *Middleware) authenticateClaimsWithManager(ctx context.Context, claims *authentication.Claims, guards []string) (context.Context, error) {
 	if len(guards) == 0 {
 		guard, err := m.authManager.Resolve()
 		if err != nil {
 			return nil, errs.Internal(err)
 		}
-		newCtx, _, authErr := guard.AuthenticateToken(ctx, raw)
+		newCtx, _, authErr := guard.AuthenticateClaims(ctx, claims)
 		if authErr != nil {
 			return nil, authErr
 		}
@@ -85,7 +104,7 @@ func (m *Middleware) authenticateWithManager(ctx context.Context, raw string, gu
 			continue
 		}
 
-		newCtx, _, authErr := guard.AuthenticateToken(ctx, raw)
+		newCtx, _, authErr := guard.AuthenticateClaims(ctx, claims)
 		if authErr == nil {
 			return newCtx, nil
 		}
@@ -98,34 +117,62 @@ func (m *Middleware) authenticateWithManager(ctx context.Context, raw string, gu
 	return nil, lastErr
 }
 
-// authenticateFallback 当未注入 AuthManager 时提供向下兼容的基础令牌校验。
-func (m *Middleware) authenticateFallback(ctx context.Context, raw string, guards []string) (context.Context, error) {
-	if len(guards) > 0 {
-		return nil, errs.Internal(errors.New("middleware: auth manager required for named guard"))
-	}
-	if m.tokens == nil {
-		return nil, errs.Internal(errors.New("middleware: token issuer not configured"))
-	}
-	newCtx, _, err := m.tokens.AuthenticateToken(ctx, raw)
-	return newCtx, err
-}
-
-// Can 【路由级中间件】仿照 Laravel can 中间件设计，基于令牌角色执行 Casbin RBAC 细粒度权限校验。
+// Can 【路由级中间件】基于 Casbin RBAC 细粒度权限校验。
 func (m *Middleware) Can(resource, action string) fiber.Handler {
-	return func(c fiber.Ctx) error {
-		if _, ok := authentication.FromContext(c.Context()); !ok {
-			return errs.Unauthorized(errs.CodeAuthTokenInvalid, "Authentication is required")
-		}
-
-		if m.authz == nil {
+	if m.authz == nil {
+		return func(c fiber.Ctx) error {
 			return errs.Internal(errors.New("middleware: authz enforcer not configured"))
 		}
-
-		if !m.authz.Can(c.Context(), resource, action) {
-			return errs.Forbidden("You are not allowed to perform this action")
-		}
-		return c.Next()
 	}
+	return m.authz.RequirePermission(resource, action)
+}
+
+// RequiresPermissions 【路由级中间件】直接暴露 Fiber v3 官方 contrib/casbin/v2 的权限组匹配能力。
+func (m *Middleware) RequiresPermissions(permissions []string, opts ...contribcasbin.Option) fiber.Handler {
+	if m.authz == nil {
+		return func(c fiber.Ctx) error {
+			return errs.Internal(errors.New("middleware: authz enforcer not configured"))
+		}
+	}
+	cbMw := m.authz.FiberMiddleware()
+	if cbMw == nil {
+		return func(c fiber.Ctx) error {
+			return errs.Internal(errors.New("middleware: authz enforcer not configured"))
+		}
+	}
+	return cbMw.RequiresPermissions(permissions, opts...)
+}
+
+// RequiresRoles 【路由级中间件】直接暴露 Fiber v3 官方 contrib/casbin/v2 的角色组匹配能力。
+func (m *Middleware) RequiresRoles(roles []string, opts ...contribcasbin.Option) fiber.Handler {
+	if m.authz == nil {
+		return func(c fiber.Ctx) error {
+			return errs.Internal(errors.New("middleware: authz enforcer not configured"))
+		}
+	}
+	cbMw := m.authz.FiberMiddleware()
+	if cbMw == nil {
+		return func(c fiber.Ctx) error {
+			return errs.Internal(errors.New("middleware: authz enforcer not configured"))
+		}
+	}
+	return cbMw.RequiresRoles(roles, opts...)
+}
+
+// RoutePermission 【路由级中间件】直接暴露 Fiber v3 官方 contrib/casbin/v2 的路由路径映射权限校验能力。
+func (m *Middleware) RoutePermission() fiber.Handler {
+	if m.authz == nil {
+		return func(c fiber.Ctx) error {
+			return errs.Internal(errors.New("middleware: authz enforcer not configured"))
+		}
+	}
+	cbMw := m.authz.FiberMiddleware()
+	if cbMw == nil {
+		return func(c fiber.Ctx) error {
+			return errs.Internal(errors.New("middleware: authz enforcer not configured"))
+		}
+	}
+	return cbMw.RoutePermission()
 }
 
 // parseGuards 解析可能存在的逗号分隔或变长守卫名称。
@@ -140,21 +187,4 @@ func parseGuards(guardNames []string) []string {
 		}
 	}
 	return guards
-}
-
-// bearerToken 从 Authorization 头提取 Bearer 令牌。
-func bearerToken(c fiber.Ctx) (string, error) {
-	header := strings.TrimSpace(c.Get("Authorization"))
-	if header == "" {
-		return "", errs.Unauthorized(errs.CodeAuthTokenInvalid, "Authentication is required")
-	}
-
-	parts := strings.Fields(header)
-	if len(parts) != 2 || !strings.EqualFold(parts[0], "Bearer") {
-		return "", errs.Unauthorized(
-			errs.CodeAuthTokenInvalid,
-			"Authorization header must use the Bearer scheme",
-		)
-	}
-	return parts[1], nil
 }

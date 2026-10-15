@@ -30,26 +30,24 @@ type Account struct {
 	AccessTokenExpiresAt  *time.Time `bun:"access_token_expires_at"`
 	RefreshTokenExpiresAt *time.Time `bun:"refresh_token_expires_at"`
 	Scope                 *string    `bun:"scope"`
+
+	User *User `bun:"rel:belongs-to,join:user_id=id"`
 }
 
 var _ database.Model = (*Account)(nil)
 
-// AccountQuery 返回针对 Account 实体的泛型查询构造器。
-func AccountQuery(db bun.IDB) *database.Query[Account] {
-	return database.NewQuery[Account](db)
-}
-
-// AccountQueryFrom 优先从上下文提取活跃数据库或事务，无则回退至 fallback。
-func AccountQueryFrom(ctx context.Context, fallback bun.IDB) *database.Query[Account] {
-	return database.NewQueryFrom[Account](ctx, fallback)
-}
-
 // FindCredentialAccount 取某用户的本地密码凭据；不存在时返回 sql.ErrNoRows（优先从上下文感知活跃事务）。
 func FindCredentialAccount(ctx context.Context, db bun.IDB, userID string) (*Account, error) {
-	return AccountQueryFrom(ctx, db).
-		Where("?TableAlias.user_id = ?", userID).
-		Where("?TableAlias.provider_id = ?", ProviderCredential).
-		First(ctx)
+	account := new(Account)
+	err := database.ResolveDB(ctx, db).NewSelect().
+		Model(account).
+		Where("a.user_id = ?", userID).
+		Where("a.provider_id = ?", ProviderCredential).
+		Scan(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return account, nil
 }
 
 // FindCredentialPassword 获取指定用户的本地哈希密码指针。
@@ -101,7 +99,10 @@ func CreateUserWithCredential(ctx context.Context, db bun.IDB, user *User, passw
 		return err
 	}
 
-	if tx, ok := db.(bun.Tx); ok {
+	switch tx := db.(type) {
+	case bun.Tx:
+		return run(tx)
+	case *bun.Tx:
 		return run(tx)
 	}
 	if bdb := database.UnwrapBunDB(db); bdb != nil {
@@ -112,19 +113,16 @@ func CreateUserWithCredential(ctx context.Context, db bun.IDB, user *User, passw
 	return run(db)
 }
 
-// Save 保存账号记录（自动决策插入或更新）。
-func (a *Account) Save(ctx context.Context, db bun.IDB) error {
-	return database.Save(ctx, db, a)
-}
-
 // Insert 将账号记录插入数据库。
 func (a *Account) Insert(ctx context.Context, db bun.IDB) error {
-	return database.Insert(ctx, db, a)
+	_, err := database.ResolveDB(ctx, db).NewInsert().Model(a).Exec(ctx)
+	return err
 }
 
 // Delete 删除账号记录（执行物理硬删除）。
 func (a *Account) Delete(ctx context.Context, db bun.IDB) error {
-	return database.ForceDelete(ctx, db, a)
+	_, err := database.ResolveDB(ctx, db).NewDelete().Model(a).WherePK().Exec(ctx)
+	return err
 }
 
 // UpdatePassword 更新自身口令哈希（自动透传上下文活跃事务）。

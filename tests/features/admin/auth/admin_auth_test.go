@@ -19,7 +19,6 @@ import (
 	"bfiber/internal/platform/hasher"
 	"bfiber/internal/platform/validator"
 	"bfiber/internal/shared/enums"
-	shareduser "bfiber/internal/shared/user"
 )
 
 func init() {
@@ -106,7 +105,7 @@ func setupService(repo *mockRepo) (*adminauth.Service, *authentication.TokenIssu
 		RefreshTTL: 24 * time.Hour,
 	}, nil)
 
-	guard := authentication.NewGuard(tokens, repo, shareduser.AdminPolicy{})
+	guard := authentication.NewGuard(tokens, repo, models.AdminPolicy{})
 	service := adminauth.NewService(adminauth.Deps{
 		Guard:  guard,
 		Tokens: tokens,
@@ -156,7 +155,7 @@ func TestAdminSignInEmailAntiEnumeration(t *testing.T) {
 	ctx := t.Context()
 
 	// 1. 邮箱不存在
-	_, err = service.SignInEmail(ctx, adminauth.SignInEmailRequest{
+	_, err = service.SignInEmail(ctx, adminauth.SignInEmailBody{
 		Email:    "nonexistent@example.com",
 		Password: "Password123!",
 	})
@@ -165,7 +164,7 @@ func TestAdminSignInEmailAntiEnumeration(t *testing.T) {
 	assert.Equal(t, string(errs.CodeAuthInvalidCredentials), resp.Code)
 
 	// 2. 普通用户尝试从管理端登录（必须伪装为凭据错误，防止角色与账号枚举）
-	_, err = service.SignInEmail(ctx, adminauth.SignInEmailRequest{
+	_, err = service.SignInEmail(ctx, adminauth.SignInEmailBody{
 		Email:    "user@example.com",
 		Password: "User1234!",
 	})
@@ -174,7 +173,7 @@ func TestAdminSignInEmailAntiEnumeration(t *testing.T) {
 	assert.Equal(t, string(errs.CodeAuthInvalidCredentials), resp.Code)
 
 	// 3. 管理员密码错误
-	_, err = service.SignInEmail(ctx, adminauth.SignInEmailRequest{
+	_, err = service.SignInEmail(ctx, adminauth.SignInEmailBody{
 		Email:    "admin@example.com",
 		Password: "WrongPassword!",
 	})
@@ -183,7 +182,7 @@ func TestAdminSignInEmailAntiEnumeration(t *testing.T) {
 	assert.Equal(t, string(errs.CodeAuthInvalidCredentials), resp.Code)
 
 	// 4. 管理员凭据正确登录成功
-	session, err := service.SignInEmail(ctx, adminauth.SignInEmailRequest{
+	session, err := service.SignInEmail(ctx, adminauth.SignInEmailBody{
 		Email:    "admin@example.com",
 		Password: "Admin1234!",
 	})
@@ -230,7 +229,7 @@ func TestAdminSignInBannedAndInactive(t *testing.T) {
 	ctx := t.Context()
 
 	// 封禁账号拦截
-	_, err = service.SignInEmail(ctx, adminauth.SignInEmailRequest{
+	_, err = service.SignInEmail(ctx, adminauth.SignInEmailBody{
 		Email:    "banned@example.com",
 		Password: "Admin1234!",
 	})
@@ -239,7 +238,7 @@ func TestAdminSignInBannedAndInactive(t *testing.T) {
 	assert.Equal(t, string(errs.CodeAuthAccountBanned), resp.Code)
 
 	// 未激活账号拦截
-	_, err = service.SignInEmail(ctx, adminauth.SignInEmailRequest{
+	_, err = service.SignInEmail(ctx, adminauth.SignInEmailBody{
 		Email:    "inactive@example.com",
 		Password: "Admin1234!",
 	})
@@ -302,7 +301,7 @@ func TestAdminRefreshDemotedUserDenied(t *testing.T) {
 	pair, err := tokens.Issue("demoted", string(models.RoleAdmin))
 	require.NoError(t, err)
 
-	_, err = service.Refresh(ctx, adminauth.RefreshTokenRequest{
+	_, err = service.Refresh(ctx, adminauth.RefreshTokenBody{
 		RefreshToken: pair.RefreshToken,
 	})
 	require.Error(t, err)
@@ -333,7 +332,7 @@ func TestAdminChangePasswordFlow(t *testing.T) {
 	ctx := t.Context()
 
 	// 1. 新密码强度不足
-	err = service.ChangePassword(ctx, "admin_1", adminauth.ChangePasswordRequest{
+	err = service.ChangePassword(ctx, "admin_1", adminauth.ChangePasswordBody{
 		CurrentPassword: "OldAdminPass123!",
 		NewPassword:     "short",
 	})
@@ -342,7 +341,7 @@ func TestAdminChangePasswordFlow(t *testing.T) {
 	assert.Equal(t, string(errs.CodeAuthPasswordTooWeak), resp.Code)
 
 	// 2. 当前旧密码不匹配
-	err = service.ChangePassword(ctx, "admin_1", adminauth.ChangePasswordRequest{
+	err = service.ChangePassword(ctx, "admin_1", adminauth.ChangePasswordBody{
 		CurrentPassword: "WrongOldPass123!",
 		NewPassword:     "NewAdminPass456!",
 	})
@@ -351,7 +350,7 @@ func TestAdminChangePasswordFlow(t *testing.T) {
 	assert.Equal(t, string(errs.CodeAuthPasswordMismatch), resp.Code)
 
 	// 3. 修改成功
-	err = service.ChangePassword(ctx, "admin_1", adminauth.ChangePasswordRequest{
+	err = service.ChangePassword(ctx, "admin_1", adminauth.ChangePasswordBody{
 		CurrentPassword: "OldAdminPass123!",
 		NewPassword:     "NewAdminPass456!",
 	})
@@ -376,7 +375,7 @@ func TestAdminChangePasswordFlow(t *testing.T) {
 		ProviderID: models.ProviderCredential,
 		Password:   &hash,
 	}
-	err = service.ChangePassword(ctx, "user_1", adminauth.ChangePasswordRequest{
+	err = service.ChangePassword(ctx, "user_1", adminauth.ChangePasswordBody{
 		CurrentPassword: "OldAdminPass123!",
 		NewPassword:     "NewAdminPass456!",
 	})
@@ -396,7 +395,7 @@ func TestAdminChangePasswordFlow(t *testing.T) {
 		ProviderID: models.ProviderCredential,
 		Password:   &hash,
 	}
-	err = service.ChangePassword(ctx, "banned_admin", adminauth.ChangePasswordRequest{
+	err = service.ChangePassword(ctx, "banned_admin", adminauth.ChangePasswordBody{
 		CurrentPassword: "OldAdminPass123!",
 		NewPassword:     "NewAdminPass456!",
 	})
@@ -405,7 +404,7 @@ func TestAdminChangePasswordFlow(t *testing.T) {
 	assert.Equal(t, string(errs.CodeAuthAccountBanned), resp.Code)
 
 	// 6. 不存在用户拦截 401
-	err = service.ChangePassword(ctx, "nonexistent", adminauth.ChangePasswordRequest{
+	err = service.ChangePassword(ctx, "nonexistent", adminauth.ChangePasswordBody{
 		CurrentPassword: "OldAdminPass123!",
 		NewPassword:     "NewAdminPass456!",
 	})
@@ -417,13 +416,13 @@ func TestAdminChangePasswordFlow(t *testing.T) {
 // TestAdminAuthDTOSerialization 校验 DTO 的 JSON 序列化与反序列化字段契约。
 func TestAdminAuthDTOSerialization(t *testing.T) {
 	raw := []byte(`{"email":"admin@bfiber.local","password":"secret"}`)
-	var req adminauth.SignInEmailRequest
+	var req adminauth.SignInEmailBody
 	require.NoError(t, json.Unmarshal(raw, &req))
 	assert.Equal(t, "admin@bfiber.local", req.Email)
 	assert.Equal(t, "secret", req.Password)
 
 	signOutRaw := []byte(`{"refreshToken":"rt_test123"}`)
-	var signOutReq adminauth.SignOutRequest
+	var signOutReq adminauth.SignOutBody
 	require.NoError(t, json.Unmarshal(signOutRaw, &signOutReq))
 	require.NotNil(t, signOutReq.RefreshToken)
 	assert.Equal(t, "rt_test123", *signOutReq.RefreshToken)

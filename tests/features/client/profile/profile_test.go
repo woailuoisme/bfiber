@@ -15,7 +15,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"bfiber/internal/features/client/profile"
-	"bfiber/internal/middleware/global"
+	"bfiber/internal/middleware"
 	"bfiber/internal/platform/authentication"
 	"bfiber/internal/platform/validator"
 	"bfiber/internal/shared/enums"
@@ -23,7 +23,7 @@ import (
 
 // TestUpdateProfileRequestShape 校验自助更新只暴露 Q27 允许的字段。
 func TestUpdateProfileRequestShape(t *testing.T) {
-	var request profile.UpdateProfileRequest
+	var request profile.UpdateProfileBody
 	require.NoError(t, json.Unmarshal([]byte(`{
 		"name":"Alice",
 		"image":null,
@@ -49,12 +49,12 @@ func TestUpdateProfileRequestShape(t *testing.T) {
 
 // TestUploadAvatarValidation 校验上传头像的权限要求、字段提取与魔数格式防御。
 func TestUploadAvatarValidation(t *testing.T) {
-	handler := profile.NewHandler(nil, nil)
+	handler := profile.NewHandler(nil)
 
 	newTestApp := func(withAuth bool) *fiber.App {
 		app := fiber.New(fiber.Config{
 			StructValidator: validator.NewFiberValidator(),
-			ErrorHandler:    global.New(global.Deps{}).ErrorHandler(),
+			ErrorHandler:    middleware.New(middleware.Deps{}).ErrorHandler(),
 		})
 		app.Use(func(c fiber.Ctx) error {
 			if withAuth {

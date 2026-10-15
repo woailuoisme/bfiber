@@ -15,7 +15,6 @@ import (
 	"bfiber/internal/platform/authentication"
 	"bfiber/internal/platform/cache"
 	"bfiber/internal/platform/errs"
-	"bfiber/internal/shared/user"
 )
 
 const testSecret = "0123456789abcdef0123456789abcdef"
@@ -109,7 +108,7 @@ func (p *mockUserProvider) RecordLogin(_ context.Context, id string, _ string) e
 
 // TestGuardCheckAndGuest 测试 Check 与 Guest 状态判断及 ID 提取。
 func TestGuardCheckAndGuest(t *testing.T) {
-	guard := authentication.NewGuard(newTestTokenIssuer(15*time.Minute), nil, user.ClientPolicy{})
+	guard := authentication.NewGuard(newTestTokenIssuer(15*time.Minute), nil, models.ClientPolicy{})
 
 	ctx := context.Background()
 	assert.False(t, guard.Check(ctx))
@@ -146,7 +145,7 @@ func TestGuardUserAndUserOrFail(t *testing.T) {
 		Name:   "DB User",
 	}
 
-	guard := authentication.NewGuard(newTestTokenIssuer(15*time.Minute), provider, user.ClientPolicy{})
+	guard := authentication.NewGuard(newTestTokenIssuer(15*time.Minute), provider, models.ClientPolicy{})
 	ctx := context.Background()
 
 	// 访客调用 User 返回 (nil, nil)
@@ -194,7 +193,7 @@ func TestGuardUserAndUserOrFail(t *testing.T) {
 func TestGuardLoginAndClaims(t *testing.T) {
 	issuer := newTestTokenIssuer(15 * time.Minute)
 	provider := newMockUserProvider()
-	guard := authentication.NewGuard(issuer, provider, user.ClientPolicy{})
+	guard := authentication.NewGuard(issuer, provider, models.ClientPolicy{})
 
 	u := &models.User{
 		ID:     "usr_test_login",
@@ -248,7 +247,7 @@ func TestGuardAttemptAndValidate(t *testing.T) {
 		Status: models.StatusActive,
 	}
 
-	guard := authentication.NewGuard(issuer, provider, user.ClientPolicy{})
+	guard := authentication.NewGuard(issuer, provider, models.ClientPolicy{})
 	ctx := context.Background()
 
 	// 凭据有效时的 Attempt
@@ -292,7 +291,7 @@ func TestGuardLoginUsingIDAndTokenByID(t *testing.T) {
 		Status: models.StatusActive,
 	}
 
-	guard := authentication.NewGuard(issuer, provider, user.ClientPolicy{})
+	guard := authentication.NewGuard(issuer, provider, models.ClientPolicy{})
 	ctx := context.Background()
 
 	u, sess, err := guard.LoginUsingID(ctx, "usr_target")
@@ -311,7 +310,7 @@ func TestGuardLoginUsingIDAndTokenByID(t *testing.T) {
 
 // TestGuardPolicyRejection 测试 AdminPolicy 对普通用户的拦截。
 func TestGuardPolicyRejection(t *testing.T) {
-	guard := authentication.NewGuard(newTestTokenIssuer(15*time.Minute), nil, user.AdminPolicy{})
+	guard := authentication.NewGuard(newTestTokenIssuer(15*time.Minute), nil, models.AdminPolicy{})
 
 	normalUser := &models.User{
 		ID:     "usr_normal",
@@ -342,7 +341,7 @@ func TestGuardPolicyRejection(t *testing.T) {
 // TestGuardSetTTLAndSetClaims 测试 Guard 的链式克隆与 SetToken。
 func TestGuardSetTTLAndSetClaims(t *testing.T) {
 	issuer := newTestTokenIssuer(15 * time.Minute)
-	guard := authentication.NewGuard(issuer, nil, user.ClientPolicy{})
+	guard := authentication.NewGuard(issuer, nil, models.ClientPolicy{})
 
 	customGuard := guard.SetTTL(2 * time.Hour).SetClaims(map[string]any{
 		"scope": "read:all",
@@ -379,8 +378,8 @@ func TestGuardSetTTLAndSetClaims(t *testing.T) {
 // TestAuthManager 测试多守卫注册与解析。
 func TestAuthManager(t *testing.T) {
 	issuer := newTestTokenIssuer(15 * time.Minute)
-	clientGuard := authentication.NewGuard(issuer, nil, user.ClientPolicy{})
-	adminGuard := authentication.NewGuard(issuer, nil, user.AdminPolicy{})
+	clientGuard := authentication.NewGuard(issuer, nil, models.ClientPolicy{})
+	adminGuard := authentication.NewGuard(issuer, nil, models.AdminPolicy{})
 
 	mgr := authentication.NewManager()
 	mgr.Register("client", clientGuard)
@@ -421,14 +420,16 @@ func TestGuardRevocationEpochAndInvalidateAll(t *testing.T) {
 		Status: models.StatusActive,
 	}
 
-	guard := authentication.NewGuard(issuer, provider, user.ClientPolicy{})
+	guard := authentication.NewGuard(issuer, provider, models.ClientPolicy{})
 	ctx := context.Background()
 
 	sess, err := guard.Login(ctx, provider.users["usr_epoch"])
 	require.NoError(t, err)
 
 	// 初始状态下令牌有效
-	authCtx, claims, err := guard.AuthenticateToken(ctx, sess.Token)
+	claims1, err := guard.Tokens().Parse(sess.Token, authentication.TypeAccess)
+	require.NoError(t, err)
+	authCtx, claims, err := guard.AuthenticateClaims(ctx, claims1)
 	require.NoError(t, err)
 	assert.Equal(t, "usr_epoch", claims.Subject)
 	assert.True(t, guard.Check(authCtx))
@@ -438,7 +439,7 @@ func TestGuardRevocationEpochAndInvalidateAll(t *testing.T) {
 	require.NoError(t, err)
 
 	// 原令牌认证被拒，返回 401 撤销错误
-	_, _, err = guard.AuthenticateToken(ctx, sess.Token)
+	_, _, err = guard.AuthenticateClaims(ctx, claims1)
 	require.Error(t, err)
 	bizErr, ok := errs.As(err)
 	require.True(t, ok)
@@ -454,20 +455,22 @@ func TestGuardRevocationEpochAndInvalidateAll(t *testing.T) {
 	sess2, err := guard.Login(ctx, user2)
 	require.NoError(t, err)
 
-	authCtx2, _, err := guard.AuthenticateToken(ctx, sess2.Token)
+	claims2, err := guard.Tokens().Parse(sess2.Token, authentication.TypeAccess)
+	require.NoError(t, err)
+	authCtx2, _, err := guard.AuthenticateClaims(ctx, claims2)
 	require.NoError(t, err)
 
 	err = guard.LogoutAll(authCtx2)
 	require.NoError(t, err)
 
-	_, _, err = guard.AuthenticateToken(ctx, sess2.Token)
+	_, _, err = guard.AuthenticateClaims(ctx, claims2)
 	require.Error(t, err)
 	bizErr, ok = errs.As(err)
 	require.True(t, ok)
 	assert.Equal(t, errs.CodeAuthTokenRevoked, bizErr.Code())
 }
 
-// TestGuardAuthenticateTokenPolicy 测试守卫在 AuthenticateToken 时执行策略校验及用户缓存。
+// TestGuardAuthenticateTokenPolicy 测试守卫在 AuthenticateClaims 时执行策略校验及用户缓存。
 func TestGuardAuthenticateTokenPolicy(t *testing.T) {
 	issuer := newTestTokenIssuer(15 * time.Minute)
 	provider := newMockUserProvider()
@@ -490,13 +493,15 @@ func TestGuardAuthenticateTokenPolicy(t *testing.T) {
 		Name:   "Banned Admin",
 	}
 
-	adminGuard := authentication.NewGuard(issuer, provider, user.AdminPolicy{})
+	adminGuard := authentication.NewGuard(issuer, provider, models.AdminPolicy{})
 	ctx := context.Background()
 
 	// 1. 普通用户访问 AdminGuard 应被策略拒绝（返回 CodeForbidden）
 	normalPair, err := issuer.Issue("usr_normal", "user")
 	require.NoError(t, err)
-	_, _, err = adminGuard.AuthenticateToken(ctx, normalPair.AccessToken)
+	normalClaims, err := issuer.Parse(normalPair.AccessToken, authentication.TypeAccess)
+	require.NoError(t, err)
+	_, _, err = adminGuard.AuthenticateClaims(ctx, normalClaims)
 	require.Error(t, err)
 	bizErr, ok := errs.As(err)
 	require.True(t, ok)
@@ -505,7 +510,9 @@ func TestGuardAuthenticateTokenPolicy(t *testing.T) {
 	// 2. 封禁管理员访问 AdminGuard 应被策略拒绝（返回 CodeAuthAccountBanned）
 	bannedPair, err := issuer.Issue("usr_banned", "admin")
 	require.NoError(t, err)
-	_, _, err = adminGuard.AuthenticateToken(ctx, bannedPair.AccessToken)
+	bannedClaims, err := issuer.Parse(bannedPair.AccessToken, authentication.TypeAccess)
+	require.NoError(t, err)
+	_, _, err = adminGuard.AuthenticateClaims(ctx, bannedClaims)
 	require.Error(t, err)
 	bizErr, ok = errs.As(err)
 	require.True(t, ok)
@@ -514,7 +521,9 @@ func TestGuardAuthenticateTokenPolicy(t *testing.T) {
 	// 3. 正常管理员访问 AdminGuard 认证通过，且上下文缓存被填充（后续 User 0 次 DB 查询）
 	adminPair, err := issuer.Issue("usr_admin", "admin")
 	require.NoError(t, err)
-	authCtx, claims, err := adminGuard.AuthenticateToken(ctx, adminPair.AccessToken)
+	adminClaims, err := issuer.Parse(adminPair.AccessToken, authentication.TypeAccess)
+	require.NoError(t, err)
+	authCtx, claims, err := adminGuard.AuthenticateClaims(ctx, adminClaims)
 	require.NoError(t, err)
 	assert.Equal(t, "usr_admin", claims.Subject)
 
@@ -533,7 +542,7 @@ func TestAuthManagerExtendAndResolve(t *testing.T) {
 	instantiated := false
 	mgr.Extend("custom", func() (authentication.StatefulGuard, error) {
 		instantiated = true
-		return authentication.NewGuard(issuer, nil, user.ClientPolicy{}), nil
+		return authentication.NewGuard(issuer, nil, models.ClientPolicy{}), nil
 	})
 
 	assert.False(t, instantiated, "未调用前不应提前实例化")
@@ -589,7 +598,7 @@ func TestGuardOnceAndOnceUsingID(t *testing.T) {
 		Status: models.StatusActive,
 	}
 
-	guard := authentication.NewGuard(newTestTokenIssuer(15*time.Minute), provider, user.ClientPolicy{})
+	guard := authentication.NewGuard(newTestTokenIssuer(15*time.Minute), provider, models.ClientPolicy{})
 	ctx := context.Background()
 
 	// 初始状态：未认证且无实体缓存

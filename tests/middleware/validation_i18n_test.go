@@ -13,7 +13,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"bfiber/internal/config"
-	"bfiber/internal/middleware/global"
+	"bfiber/internal/middleware"
 	"bfiber/internal/platform/errs"
 	"bfiber/internal/platform/i18n"
 	"bfiber/internal/platform/validator"
@@ -39,7 +39,7 @@ func TestValidationMessageTranslation(t *testing.T) {
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			m := global.New(global.Deps{Translator: translator})
+			m := middleware.New(middleware.Deps{Translator: translator})
 			app := fiber.New(fiber.Config{
 				StructValidator: validator.NewFiberValidator(),
 				ErrorHandler:    m.ErrorHandler(),

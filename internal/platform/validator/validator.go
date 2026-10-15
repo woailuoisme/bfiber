@@ -2,7 +2,6 @@
 package validator
 
 import (
-	"bytes"
 	"cmp"
 	"errors"
 	"fmt"
@@ -23,7 +22,6 @@ import (
 	"github.com/aarondl/opt/omitnull"
 	"github.com/dustin/go-humanize"
 	govalidator "github.com/go-playground/validator/v10"
-	"github.com/gofiber/fiber/v3"
 
 	"bfiber/internal/platform/errs"
 	"bfiber/internal/platform/i18n"
@@ -59,11 +57,60 @@ func NewFiberValidator() *FiberValidator {
 	return defaultValidator
 }
 
-// Validate 执行结构体标签校验与 Validatable 接口回调。
+// Error 封装结构体校验产生的字段错误明细，解耦上层与具体第三方校验器实现。
+type Error struct {
+	valErr govalidator.ValidationErrors
+}
+
+func (e *Error) Error() string {
+	if e == nil || e.valErr == nil {
+		return ""
+	}
+	return e.valErr.Error()
+}
+
+// Unwrap 返回底层的具体验证错误，支持 errors.AsType 与 errors.Is 解包。
+func (e *Error) Unwrap() error {
+	if e == nil {
+		return nil
+	}
+	return e.valErr
+}
+
+// ValidationErrors 返回底层具体校验器字段错误列表。
+func (e *Error) ValidationErrors() govalidator.ValidationErrors {
+	if e == nil {
+		return nil
+	}
+	return e.valErr
+}
+
+// Translate 按指定语言将错误渲染为字段映射字典。
+func (e *Error) Translate(translator *i18n.Translator, language string) map[string][]string {
+	if e == nil {
+		return nil
+	}
+	return Translate(translator, language, e.valErr)
+}
+
+func wrapStructError(err error) error {
+	if err == nil {
+		return nil
+	}
+	if valErr, ok := errors.AsType[govalidator.ValidationErrors](err); ok {
+		return &Error{valErr: valErr}
+	}
+	return err
+}
+
+// Validate 实现 Fiber v3 StructValidator 接口契约，执行结构体标签校验与 Validatable 接口回调。
 func (fv *FiberValidator) Validate(out any) error {
+	if out == nil {
+		return nil
+	}
 	if fv.engine != nil {
 		if err := fv.engine.Struct(out); err != nil {
-			return err
+			return wrapStructError(err)
 		}
 	}
 	return checkValidatable(out)
@@ -197,7 +244,8 @@ func registerRules(v *govalidator.Validate) error {
 		return field.Name
 	})
 
-	v.RegisterCustomTypeFunc(UnpackOmitNull,
+	v.RegisterCustomTypeFunc(
+		UnpackOmitNull,
 		omitnull.Val[string]{},
 		omitnull.Val[bool]{},
 		omitnull.Val[int]{},
@@ -386,15 +434,6 @@ func PasswordStrength(field, password string) error {
 		WithField(field, "The "+field+" must contain both letters and numbers.")
 }
 
-// BindOptionalJSON 解析可省略的请求体：空体视为零值对象，非空体仍需是合法 JSON。
-func BindOptionalJSON(c fiber.Ctx, target any) error {
-	body := c.Body()
-	if len(bytes.TrimSpace(body)) == 0 {
-		return nil
-	}
-	return c.Bind().Body(target)
-}
-
 // Translate 按请求语言渲染每条校验失败，键为 api.md 约定的字段路径。
 func Translate(translator *i18n.Translator, language string, valErr govalidator.ValidationErrors) map[string][]string {
 	fields := make(map[string][]string, len(valErr))
@@ -407,6 +446,21 @@ func Translate(translator *i18n.Translator, language string, valErr govalidator.
 		fields[field] = append(fields[field], cmp.Or(message, fmt.Sprintf("The %s is invalid.", field)))
 	}
 	return fields
+}
+
+// ExtractFields 从各类错误（*Error、govalidator.ValidationErrors 等）中安全提取国际化校验字段字典。
+func ExtractFields(translator *i18n.Translator, language string, err error) (map[string][]string, bool) {
+	if err == nil {
+		return nil, false
+	}
+	var ve *Error
+	if errors.As(err, &ve) && ve != nil {
+		return ve.Translate(translator, language), true
+	}
+	if valErr, ok := errors.AsType[govalidator.ValidationErrors](err); ok {
+		return Translate(translator, language, valErr), true
+	}
+	return nil, false
 }
 
 // MessageKey 选择文案键：优先查询自定义规则文案映射，随后区分数值与字符串的 min/max 措辞。

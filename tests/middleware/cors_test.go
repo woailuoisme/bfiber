@@ -10,12 +10,12 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"bfiber/internal/config"
-	"bfiber/internal/middleware/global"
+	"bfiber/internal/middleware"
 )
 
 // TestCORS_OptionsPreflightShortCircuit 验证 OPTIONS 预检请求返回 204 并且直接短路阻断后续中间件与路由。
 func TestCORS_OptionsPreflightShortCircuit(t *testing.T) {
-	m := global.New(global.Deps{
+	m := middleware.New(middleware.Deps{
 		CORS: config.CORSConfig{
 			AllowedOrigins: []string{"https://example.com"},
 		},
@@ -49,7 +49,7 @@ func TestCORS_OptionsPreflightShortCircuit(t *testing.T) {
 
 // TestCORS_WildcardOrigin 验证通配符来源设置及非 OPTIONS 正常请求的头部回显。
 func TestCORS_WildcardOrigin(t *testing.T) {
-	m := global.New(global.Deps{
+	m := middleware.New(middleware.Deps{
 		CORS: config.CORSConfig{
 			AllowedOrigins: []string{"*"},
 		},

@@ -90,7 +90,7 @@ func (AllowAllPolicy[T]) ValidateUser(context.Context, T) error {
 
 // StatefulGuard 统一抽象传输层（HTTP 中间件、WebSocket 网关）与业务层通用的状态守卫契约。
 type StatefulGuard interface {
-	AuthenticateToken(ctx context.Context, rawToken string) (context.Context, *Claims, error)
+	AuthenticateClaims(ctx context.Context, claims *Claims) (context.Context, *Claims, error)
 	Check(ctx context.Context) bool
 	InvalidateToken(ctx context.Context) error
 }

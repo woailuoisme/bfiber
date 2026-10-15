@@ -3,6 +3,7 @@ package bootstrap
 
 import (
 	"context"
+	"sync"
 	"time"
 
 	"github.com/gofiber/fiber/v3"
@@ -13,6 +14,7 @@ import (
 	"bfiber/internal/config"
 	"bfiber/internal/platform/cache"
 	"bfiber/internal/platform/eventbus"
+	"bfiber/internal/platform/influxdb"
 	"bfiber/internal/platform/mailer"
 	"bfiber/internal/platform/notification"
 	"bfiber/internal/platform/payment"
@@ -29,6 +31,7 @@ import (
 
 // Application 聚合装配完成的系统依赖与 HTTP 引擎。
 type Application struct {
+	closeOnce    sync.Once
 	cfg          *config.Config
 	logger       *zap.Logger
 	db           *bun.DB
@@ -46,6 +49,7 @@ type Application struct {
 	eventbus     *eventbus.Manager
 	queue        *queue.Client
 	temporal     client.Client
+	influxdb     *influxdb.Client
 	engine       *fiber.App
 }
 
@@ -73,36 +77,44 @@ func (a *Application) Queue() *queue.Client { return a.queue }
 // Temporal 暴露已装配的 Temporal 分布式工作流客户端（未启用时为 nil）。
 func (a *Application) Temporal() client.Client { return a.temporal }
 
-// Close 释放全部外部资源与客户端连接。
+// InfluxDB 暴露已装配的 InfluxDB 3 客户端（未启用时为 nil）。
+func (a *Application) InfluxDB() *influxdb.Client { return a.influxdb }
+
+// Close 释放全部外部资源与客户端连接，通过 sync.Once 保证多次调用幂等安全。
 func (a *Application) Close() {
-	if a.temporal != nil {
-		a.temporal.Close()
-	}
-	if a.eventbus != nil {
-		a.closeResource("event bus manager", a.eventbus.Close)
-	}
-	if a.queue != nil {
-		a.closeResource("queue client", a.queue.Close)
-	}
-	if a.notification != nil {
-		a.closeResource("notification worker pool", a.notification.Close)
-	}
-	if a.mailer != nil {
-		a.closeResource("SMTP connection", a.mailer.Close)
-	}
-	if a.locker != nil {
-		a.closeResource("distributed locker", a.locker.Close)
-	}
-	if a.cache != nil {
-		a.closeResource("Redis connection", a.cache.Close)
-	}
-	if a.db != nil {
-		a.closeResource("database connection", a.db.Close)
-	}
-	if err := telemetry.Shutdown(context.Background()); err != nil {
-		a.logger.Warn("failed to shutdown telemetry", zap.Error(err))
-	}
-	platformsentry.Flush(5 * time.Second)
+	a.closeOnce.Do(func() {
+		if a.influxdb != nil {
+			a.closeResource("InfluxDB connection", a.influxdb.Close)
+		}
+		if a.temporal != nil {
+			a.temporal.Close()
+		}
+		if a.eventbus != nil {
+			a.closeResource("event bus manager", a.eventbus.Close)
+		}
+		if a.queue != nil {
+			a.closeResource("queue client", a.queue.Close)
+		}
+		if a.notification != nil {
+			a.closeResource("notification worker pool", a.notification.Close)
+		}
+		if a.mailer != nil {
+			a.closeResource("SMTP connection", a.mailer.Close)
+		}
+		if a.locker != nil {
+			a.closeResource("distributed locker", a.locker.Close)
+		}
+		if a.cache != nil {
+			a.closeResource("Redis connection", a.cache.Close)
+		}
+		if a.db != nil {
+			a.closeResource("database connection", a.db.Close)
+		}
+		if err := telemetry.Shutdown(context.Background()); err != nil {
+			a.logger.Warn("failed to shutdown telemetry", zap.Error(err))
+		}
+		platformsentry.Flush(5 * time.Second)
+	})
 }
 
 func (a *Application) closeResource(name string, closeFn func() error) {

@@ -16,12 +16,12 @@ import (
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 	"go.opentelemetry.io/otel/sdk/trace/tracetest"
 
-	"bfiber/internal/middleware/global"
+	"bfiber/internal/middleware"
 	"bfiber/internal/platform/logger"
 )
 
 func TestTelemetryMiddleware_Disabled(t *testing.T) {
-	mw := global.New(global.Deps{})
+	mw := middleware.New(middleware.Deps{})
 	app := fiber.New()
 	app.Use(
 		mw.Telemetry(),
@@ -55,7 +55,7 @@ func TestTelemetryMiddleware_TraceLogCorrelation(t *testing.T) {
 		logger.WithWriter(&buf),
 	)
 
-	mw := global.New(global.Deps{Logger: testLogger})
+	mw := middleware.New(middleware.Deps{Logger: testLogger})
 	app := fiber.New()
 
 	app.Use(

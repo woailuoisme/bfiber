@@ -2,7 +2,7 @@ package config
 
 // I18nConfig 描述多语言本地化配置。
 type I18nConfig struct {
-	DefaultLanguage string `mapstructure:"app_locale"`
+	DefaultLanguage string `env:"APP_LOCALE" envDefault:"en"`
 }
 
 // validateI18n 检查国际化语言配置合法性。

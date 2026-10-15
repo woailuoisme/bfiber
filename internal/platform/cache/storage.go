@@ -1,213 +1,168 @@
-// Package cache 封装 Redis/Valkey 客户端。
+// Package cache 封装 Redis/Valkey 客户端与 Fiber Storage 适配。
 package cache
 
 import (
 	"context"
-	"errors"
-	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/gofiber/fiber/v3"
-	"github.com/redis/rueidis"
+	"github.com/gofiber/storage/memory/v2"
+	rueidisStorage "github.com/gofiber/storage/rueidis"
+	"go.uber.org/zap"
 )
 
-// fiberStorage 将 Client 适配为 Fiber v3 官方的 fiber.Storage 接口。
-type fiberStorage struct {
-	client *Client
-	prefix string
-}
-
-var _ fiber.Storage = (*fiberStorage)(nil)
-
-func normalizePrefix(prefix []string) string {
-	if len(prefix) > 0 {
-		if p := strings.TrimSpace(prefix[0]); p != "" {
-			return p
-		}
+// Storage 返回集成 Fiber 官方 github.com/gofiber/storage/rueidis 的原生存储实例。
+func (c *Client) Storage() fiber.Storage {
+	if c == nil || c.rdb == nil {
+		return nil
 	}
-	return "storage"
+	return rueidisStorage.NewFromConnection(c.rdb)
 }
 
-// Storage 返回满足 Fiber v3 官方中间件生态契约的 fiber.Storage 存储实例。
-func (c *Client) Storage(prefix ...string) fiber.Storage {
-	return &fiberStorage{
-		client: c,
-		prefix: normalizePrefix(prefix),
+// NewMemoryStorage 返回基于 Fiber 官方 memory/v2 驱动的原生内存存储实例。
+func NewMemoryStorage() fiber.Storage {
+	return memory.New()
+}
+
+// AsFiberStorage 将任意存储对象（fiber.Storage, cache.Store, *Client 等）统一适配为满足 Fiber 官方中间件生态的 fiber.Storage。
+// 若传入 nil 则返回 nil；已是 fiber.Storage 则原样返回；若为 Redis Client 则直连 rueidis 官方存储驱动；其余 Store 回退至官方 memory 驱动。
+func AsFiberStorage(store any) fiber.Storage {
+	if store == nil {
+		return nil
+	}
+	switch s := store.(type) {
+	case fiber.Storage:
+		return s
+	case *Client:
+		return s.Storage()
+	case Store:
+		return NewMemoryStorage()
+	default:
+		return nil
 	}
 }
 
-func (s *fiberStorage) fullKey(k string) string {
-	return Key(s.prefix, k)
+// FailOpen 将任意 fiber.Storage 包装为具备故障降级（Fail-Open）弹性的存储适配器。
+// 当底层 Redis 出现网络抖动或集群故障抛出异常时，记录告警日志并自动降级，避免阻塞上层业务流。
+func FailOpen(storage fiber.Storage, logger *zap.Logger) fiber.Storage {
+	if storage == nil {
+		return nil
+	}
+	return &failOpenStorage{
+		Storage: storage,
+		logger:  logger,
+	}
 }
 
-// GetWithContext 根据指定键与请求上下文读取二进制内容；键不存在时返回 nil, nil。
-func (s *fiberStorage) GetWithContext(ctx context.Context, key string) ([]byte, error) {
-	if s == nil || s.client == nil || key == "" {
+// failOpenStorage 为 Fiber 存储提供故障自动降级（Fail-Open）防线，避免缓存故障级联引发 500 异常。
+type failOpenStorage struct {
+	fiber.Storage
+	logger      *zap.Logger
+	lastLogTime atomic.Int64 // 秒级时间戳，用于错误日志限频（5 秒最多输出一次），杜绝高并发下的日志风暴
+}
+
+var _ fiber.Storage = (*failOpenStorage)(nil)
+
+func (s *failOpenStorage) logErr(op string, err error) {
+	if err == nil || s.logger == nil {
+		return
+	}
+	now := time.Now().Unix()
+	last := s.lastLogTime.Load()
+	if now-last >= 5 && s.lastLogTime.CompareAndSwap(last, now) {
+		s.logger.Warn("cache storage error, falling back to fail-open",
+			zap.String("op", op),
+			zap.Error(err),
+		)
+	}
+}
+
+func (s *failOpenStorage) Get(key string) ([]byte, error) {
+	if s.Storage == nil {
 		return nil, nil
 	}
-	res := s.client.do(ctx, s.client.rdb.B().Get().Key(s.fullKey(key)).Build())
-	val, err := res.AsBytes()
-	if err == nil {
-		return val, nil
+	val, err := s.Storage.Get(key)
+	if err != nil {
+		s.logErr("get", err)
 	}
-	if errors.Is(err, rueidis.Nil) {
+	return val, nil
+}
+
+func (s *failOpenStorage) GetWithContext(ctx context.Context, key string) ([]byte, error) {
+	if s.Storage == nil {
 		return nil, nil
 	}
-	return nil, err
+	val, err := s.Storage.GetWithContext(ctx, key)
+	if err != nil {
+		s.logErr("get_with_context", err)
+	}
+	return val, nil
 }
 
-// Get 根据指定键读取二进制内容；键不存在时返回 nil, nil。
-func (s *fiberStorage) Get(key string) ([]byte, error) {
-	return s.GetWithContext(context.Background(), key)
-}
-
-// SetWithContext 将指定键值写入存储，exp 为 0 时表示不过期。
-func (s *fiberStorage) SetWithContext(ctx context.Context, key string, val []byte, exp time.Duration) error {
-	if s == nil || s.client == nil || len(key) == 0 || len(val) == 0 {
+func (s *failOpenStorage) Set(key string, val []byte, exp time.Duration) error {
+	if s.Storage == nil {
 		return nil
 	}
-	cmd := s.client.rdb.B().Set().Key(s.fullKey(key)).Value(rueidis.BinaryString(val))
-	if exp > 0 {
-		cmd.Ex(exp)
-	}
-	return s.client.do(ctx, cmd.Build()).Error()
-}
-
-// Set 将指定键值写入存储，exp 为 0 时表示不过期。
-func (s *fiberStorage) Set(key string, val []byte, exp time.Duration) error {
-	return s.SetWithContext(context.Background(), key, val, exp)
-}
-
-// DeleteWithContext 删除指定键；键不存在时不报错。
-func (s *fiberStorage) DeleteWithContext(ctx context.Context, key string) error {
-	if s == nil || s.client == nil || key == "" {
-		return nil
-	}
-	err := s.client.do(ctx, s.client.rdb.B().Del().Key(s.fullKey(key)).Build()).Error()
-	if errors.Is(err, rueidis.Nil) {
-		return nil
-	}
-	return err
-}
-
-// Delete 删除指定键；键不存在时不报错。
-func (s *fiberStorage) Delete(key string) error {
-	return s.DeleteWithContext(context.Background(), key)
-}
-
-// ResetWithContext 重置存储并批量清除属于当前前缀空间的所有键。
-func (s *fiberStorage) ResetWithContext(ctx context.Context) error {
-	if s == nil || s.client == nil {
-		return nil
-	}
-	pattern := Key(s.prefix, "*")
-	var cursor uint64
-	for {
-		res, err := s.client.rdb.Do(ctx, s.client.rdb.B().Scan().Cursor(cursor).Match(pattern).Count(100).Build()).AsScanEntry()
-		if err != nil {
-			return err
-		}
-		if len(res.Elements) > 0 {
-			if delErr := s.client.do(ctx, s.client.rdb.B().Del().Key(res.Elements...).Build()).Error(); delErr != nil {
-				return delErr
-			}
-		}
-		cursor = res.Cursor
-		if cursor == 0 {
-			break
-		}
+	if err := s.Storage.Set(key, val, exp); err != nil {
+		s.logErr("set", err)
 	}
 	return nil
 }
 
-// Reset 重置存储并批量清除属于当前前缀空间的所有键。
-func (s *fiberStorage) Reset() error {
-	return s.ResetWithContext(context.Background())
-}
-
-// Close 满足 fiber.Storage 接口契约，底层连接生命周期由应用程序统一管控。
-func (s *fiberStorage) Close() error {
-	return nil
-}
-
-// AsFiberStorage 将任意 Store 适配为满足 Fiber 官方中间件生态的 fiber.Storage。
-func AsFiberStorage(s Store, prefix ...string) fiber.Storage {
-	if s == nil {
+func (s *failOpenStorage) SetWithContext(ctx context.Context, key string, val []byte, exp time.Duration) error {
+	if s.Storage == nil {
 		return nil
 	}
-	if client, ok := s.(*Client); ok {
-		return client.Storage(prefix...)
+	if err := s.Storage.SetWithContext(ctx, key, val, exp); err != nil {
+		s.logErr("set_with_context", err)
 	}
-	return &genericFiberStorage{
-		store:  s,
-		prefix: normalizePrefix(prefix),
-	}
+	return nil
 }
 
-type genericFiberStorage struct {
-	store  Store
-	prefix string
-}
-
-var _ fiber.Storage = (*genericFiberStorage)(nil)
-
-func (s *genericFiberStorage) fullKey(k string) string {
-	return Key(s.prefix, k)
-}
-
-func (s *genericFiberStorage) GetWithContext(ctx context.Context, key string) ([]byte, error) {
-	if s == nil || s.store == nil || key == "" {
-		return nil, nil
-	}
-	v, err := s.store.Get(ctx, s.fullKey(key))
-	if err == nil {
-		return []byte(v), nil
-	}
-	if errors.Is(err, ErrNotFound) {
-		return nil, nil
-	}
-	return nil, err
-}
-
-func (s *genericFiberStorage) Get(key string) ([]byte, error) {
-	return s.GetWithContext(context.Background(), key)
-}
-
-func (s *genericFiberStorage) SetWithContext(ctx context.Context, key string, val []byte, exp time.Duration) error {
-	if s == nil || s.store == nil || key == "" || len(val) == 0 {
+func (s *failOpenStorage) Delete(key string) error {
+	if s.Storage == nil {
 		return nil
 	}
-	ttl := exp
-	if ttl <= 0 {
-		ttl = 24 * time.Hour
+	if err := s.Storage.Delete(key); err != nil {
+		s.logErr("delete", err)
 	}
-	return s.store.Set(ctx, s.fullKey(key), string(val), ttl)
+	return nil
 }
 
-func (s *genericFiberStorage) Set(key string, val []byte, exp time.Duration) error {
-	return s.SetWithContext(context.Background(), key, val, exp)
-}
-
-func (s *genericFiberStorage) DeleteWithContext(ctx context.Context, key string) error {
-	if s == nil || s.store == nil || key == "" {
+func (s *failOpenStorage) DeleteWithContext(ctx context.Context, key string) error {
+	if s.Storage == nil {
 		return nil
 	}
-	_, err := s.store.Delete(ctx, s.fullKey(key))
-	return err
-}
-
-func (s *genericFiberStorage) Delete(key string) error {
-	return s.DeleteWithContext(context.Background(), key)
-}
-
-func (s *genericFiberStorage) ResetWithContext(_ context.Context) error {
+	if err := s.Storage.DeleteWithContext(ctx, key); err != nil {
+		s.logErr("delete_with_context", err)
+	}
 	return nil
 }
 
-func (s *genericFiberStorage) Reset() error {
+func (s *failOpenStorage) Reset() error {
+	if s.Storage == nil {
+		return nil
+	}
+	if err := s.Storage.Reset(); err != nil {
+		s.logErr("reset", err)
+	}
 	return nil
 }
 
-func (s *genericFiberStorage) Close() error {
+func (s *failOpenStorage) ResetWithContext(ctx context.Context) error {
+	if s.Storage == nil {
+		return nil
+	}
+	if err := s.Storage.ResetWithContext(ctx); err != nil {
+		s.logErr("reset_with_context", err)
+	}
 	return nil
+}
+
+func (s *failOpenStorage) Close() error {
+	if s.Storage == nil {
+		return nil
+	}
+	return s.Storage.Close()
 }

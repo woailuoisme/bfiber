@@ -39,6 +39,7 @@ type Client struct {
 }
 
 // Key 拼接带应用命名空间的缓存键（例如 Key("jwt", "revoked", jti) -> bfiber:jwt:revoked:<jti>）。
+// 注意：按既有安全契约，parts 中的空片段会保留对应分隔符位置以维持键空间拓扑一致性（如 "a::b"）。
 func Key(parts ...string) string {
 	if len(parts) == 0 {
 		return namespace
@@ -64,6 +65,14 @@ func Open(ctx context.Context, cfg config.CacheConfig) (*Client, error) {
 		return nil, fmt.Errorf("cache: ping Redis failed: %w", err)
 	}
 	return client, nil
+}
+
+// RDB 返回底层绑定的 rueidis.Client 原生连接实例。
+func (c *Client) RDB() rueidis.Client {
+	if c == nil {
+		return nil
+	}
+	return c.rdb
 }
 
 // clientOption 解析并转换 REDIS_URL 为 rueidis 客户端连接参数。

@@ -20,8 +20,8 @@ import (
 
 	"bfiber/internal/config"
 	"bfiber/internal/middleware"
-	"bfiber/internal/middleware/global"
 	"bfiber/internal/platform/authentication"
+	"bfiber/internal/platform/cache"
 	"bfiber/internal/platform/errs"
 )
 
@@ -118,7 +118,7 @@ func TestRateLimit_Exceeded(t *testing.T) {
 	store := newMockRateLimitStore()
 
 	app := fiber.New(fiber.Config{
-		ErrorHandler: global.New(global.Deps{}).ErrorHandler(),
+		ErrorHandler: middleware.New(middleware.Deps{}).ErrorHandler(),
 	})
 	app.Use(middleware.ThrottleWithStore(store, 2, time.Minute, middleware.WithThrottleTier(middleware.TierAnonymous)))
 	app.Get("/test", func(c fiber.Ctx) error {
@@ -157,7 +157,7 @@ func TestRateLimit_SlidingWindow(t *testing.T) {
 	store := newMockRateLimitStore()
 
 	app := fiber.New(fiber.Config{
-		ErrorHandler: global.New(global.Deps{}).ErrorHandler(),
+		ErrorHandler: middleware.New(middleware.Deps{}).ErrorHandler(),
 	})
 	app.Use(middleware.ThrottleWithStore(
 		store,
@@ -239,7 +239,7 @@ func TestRateLimit_StoreFailOpen_WithLogger(t *testing.T) {
 
 	allLogs := logs.All()
 	require.NotEmpty(t, allLogs)
-	assert.Contains(t, allLogs[0].Message, "ratelimit storage error, falling back to fail-open")
+	assert.Contains(t, allLogs[0].Message, "cache storage error, falling back to fail-open")
 }
 
 // TestMiddleware_Throttle_StoreFailOpen_Logs 验证 Middleware 实例通过 Throttle 自动透传 Logger 进行故障记录。
@@ -270,7 +270,7 @@ func TestMiddleware_Throttle_StoreFailOpen_Logs(t *testing.T) {
 
 	allLogs := logs.All()
 	require.NotEmpty(t, allLogs)
-	assert.Contains(t, allLogs[0].Message, "ratelimit storage error, falling back to fail-open")
+	assert.Contains(t, allLogs[0].Message, "cache storage error, falling back to fail-open")
 }
 
 // TestRateLimit_NilStoreOrZeroLimit 验证存储为空或配额<=0时直接放行。
@@ -383,7 +383,7 @@ func TestThrottle_Tier(t *testing.T) {
 	m.SetLimiterStore(store)
 
 	app := fiber.New(fiber.Config{
-		ErrorHandler: global.New(global.Deps{}).ErrorHandler(),
+		ErrorHandler: middleware.New(middleware.Deps{}).ErrorHandler(),
 	})
 	app.Post("/auth/login", m.Throttle(middleware.TierSensitive), func(c fiber.Ctx) error {
 		return c.JSON(fiber.Map{"status": "ok"})
@@ -404,7 +404,7 @@ func TestThrottle_ThrottleRate(t *testing.T) {
 	m.SetLimiterStore(store)
 
 	app := fiber.New(fiber.Config{
-		ErrorHandler: global.New(global.Deps{}).ErrorHandler(),
+		ErrorHandler: middleware.New(middleware.Deps{}).ErrorHandler(),
 	})
 	// 允许每 1 分钟 2 次请求
 	app.Get("/api/fast", m.ThrottleRate(2, time.Minute), func(c fiber.Ctx) error {
@@ -483,7 +483,7 @@ func TestThrottle_DisabledGlobally(t *testing.T) {
 	m.SetLimiterStore(store)
 
 	app := fiber.New(fiber.Config{
-		ErrorHandler: global.New(global.Deps{}).ErrorHandler(),
+		ErrorHandler: middleware.New(middleware.Deps{}).ErrorHandler(),
 	})
 	app.Post("/auth/login", m.Throttle(middleware.TierSensitive), func(c fiber.Ctx) error {
 		return c.JSON(fiber.Map{"status": "ok"})
@@ -509,4 +509,28 @@ func TestThrottle_DisabledGlobally(t *testing.T) {
 		assert.Equal(t, fiber.StatusOK, resp.StatusCode, "request %d should succeed", i+1)
 		assert.Empty(t, resp.Header.Get("X-RateLimit-Limit"), "headers should not be set when rate limit is disabled")
 	}
+}
+
+// TestThrottleWithStorage 验证强类型 fiber.Storage 构造器限流行为正常。
+func TestThrottleWithStorage(t *testing.T) {
+	storage := cache.NewMemoryStorage()
+	app := fiber.New(fiber.Config{
+		ErrorHandler: middleware.New(middleware.Deps{}).ErrorHandler(),
+	})
+	app.Get("/typed-rate", middleware.ThrottleWithStorage(storage, 2, time.Minute), func(c fiber.Ctx) error {
+		return c.JSON(fiber.Map{"status": "ok"})
+	})
+
+	for i := range 2 {
+		req := httptest.NewRequest(http.MethodGet, "/typed-rate", nil)
+		resp, err := app.Test(req, fiber.TestConfig{Timeout: 0})
+		require.NoError(t, err)
+		assert.Equal(t, fiber.StatusOK, resp.StatusCode, "request %d should succeed", i+1)
+	}
+
+	// 第 3 次请求应被拦截
+	req3 := httptest.NewRequest(http.MethodGet, "/typed-rate", nil)
+	resp3, err := app.Test(req3, fiber.TestConfig{Timeout: 0})
+	require.NoError(t, err)
+	assert.Equal(t, fiber.StatusTooManyRequests, resp3.StatusCode)
 }

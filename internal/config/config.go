@@ -3,32 +3,33 @@ package config
 
 // Config 汇总应用的所有配置模块。
 type Config struct {
-	App          AppConfig          `mapstructure:",squash"`
-	Database     DatabaseConfig     `mapstructure:",squash"`
-	Cache        CacheConfig        `mapstructure:",squash"`
-	Storage      StorageConfig      `mapstructure:",squash"`
-	JWT          JWTConfig          `mapstructure:",squash"`
-	Mail         MailConfig         `mapstructure:",squash"`
-	I18n         I18nConfig         `mapstructure:",squash"`
-	Log          LogConfig          `mapstructure:",squash"`
-	Auth         AuthConfig         `mapstructure:",squash"`
-	Limiter      LimiterConfig      `mapstructure:",squash"`
-	CORS         CORSConfig         `mapstructure:",squash"`
-	Seed         SeedConfig         `mapstructure:",squash"`
-	Queue        QueueConfig        `mapstructure:",squash"`
-	Search       SearchConfig       `mapstructure:",squash"`
-	Realtime     RealtimeConfig     `mapstructure:",squash"`
-	GeoIP        GeoIPConfig        `mapstructure:",squash"`
-	Excel        ExcelConfig        `mapstructure:",squash"`
-	WeChat       WeChatConfig       `mapstructure:",squash"`
-	Payment      PaymentConfig      `mapstructure:",squash"`
-	Notification NotificationConfig `mapstructure:",squash"`
-	Media        MediaConfig        `mapstructure:",squash"`
-	PDF          PDFConfig          `mapstructure:",squash"`
-	EventBus     EventBusConfig     `mapstructure:",squash"`
-	Sentry       SentryConfig       `mapstructure:",squash"`
-	Telemetry    TelemetryConfig    `mapstructure:",squash"`
-	Temporal     TemporalConfig     `mapstructure:",squash"`
+	App          AppConfig
+	Database     DatabaseConfig
+	Cache        CacheConfig
+	Storage      StorageConfig
+	JWT          JWTConfig
+	Mail         MailConfig
+	I18n         I18nConfig
+	Log          LogConfig
+	Auth         AuthConfig
+	Limiter      LimiterConfig
+	CORS         CORSConfig
+	Seed         SeedConfig
+	Queue        QueueConfig
+	Search       SearchConfig
+	Realtime     RealtimeConfig
+	GeoIP        GeoIPConfig
+	Excel        ExcelConfig
+	WeChat       WeChatConfig
+	Payment      PaymentConfig
+	Notification NotificationConfig
+	Media        MediaConfig
+	PDF          PDFConfig
+	EventBus     EventBusConfig
+	Sentry       SentryConfig
+	Telemetry    TelemetryConfig
+	Temporal     TemporalConfig
+	InfluxDB     InfluxDBConfig
 }
 
 // Validate 依次执行各模块的语义与有效性校验。
@@ -58,6 +59,7 @@ func (c *Config) Validate() error {
 		c.validateSentry,
 		c.validateTelemetry,
 		c.validateTemporal,
+		c.validateInfluxDB,
 	}
 	for _, fn := range validators {
 		if err := fn(); err != nil {

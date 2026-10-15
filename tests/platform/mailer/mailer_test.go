@@ -271,6 +271,16 @@ func TestSendMailableTemplateRendering(t *testing.T) {
 	assert.Contains(t, receivedHTML, "Alex")
 	assert.Contains(t, receivedHTML, "进入系统")
 	assert.Contains(t, receivedHTML, "https://example.com/dashboard")
+
+	// 验证收件人空拦截卫语句
+	err = client.SendMailable(context.Background(), "   ", mailable)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "recipient email cannot be empty")
+
+	// 验证 nil mailable 拦截
+	err = client.SendMailable(context.Background(), "alex@example.com", nil)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "mailable cannot be nil")
 }
 
 func TestUnsupportedDriver(t *testing.T) {
@@ -319,67 +329,39 @@ func TestConfigValidation(t *testing.T) {
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "resend api key cannot be empty")
 	})
-}
+	t.Run("非法驱动校验", func(t *testing.T) {
+		mailCfg := config.MailConfig{
+			Driver: "invalid_driver",
+		}
+		err := mailCfg.Validate()
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "unsupported mail driver")
+		assert.Contains(t, err.Error(), "(supported: 'mailpit', 'resend')")
+	})
 
-func TestMemoryMailer(t *testing.T) {
-	t.Run("生命周期与发送断言", func(t *testing.T) {
-		mem := mailer.NewMemoryMailer()
-		require.NotNil(t, mem)
-		assert.Equal(t, 0, mem.Count())
-
-		ctx := context.Background()
-		msg := mailer.Message{
-			To:      "alice@example.com",
-			Cc:      []string{"bob@example.com"},
-			Subject: "Welcome",
-			Body:    "<h1>Hello Alice</h1>",
-			IsHTML:  true,
-			RawAttachments: []mailer.Attachment{
-				mailer.NewAttachmentFromBytes("invoice.pdf", []byte("%PDF-1.4 sample content"), "application/pdf"),
+	t.Run("空驱动默认归一化回填为mailpit", func(t *testing.T) {
+		mailCfg := config.MailConfig{
+			Driver: "",
+			Mailpit: config.MailpitConfig{
+				Port: 1025,
 			},
 		}
-
-		err := mem.Send(ctx, msg)
-		require.NoError(t, err)
-		assert.Equal(t, 1, mem.Count())
-
-		mem.AssertSent(t, 1)
-		mem.AssertSentTo(t, "alice@example.com")
-		mem.AssertSentTo(t, "bob@example.com")
-
-		last, ok := mem.LastMessage()
-		assert.True(t, ok)
-		assert.Equal(t, "Welcome", last.Subject)
-		assert.Len(t, last.RawAttachments, 1)
-
-		// 验证重置
-		mem.Reset()
-		assert.Equal(t, 0, mem.Count())
-
-		// 验证空收件人校验
-		err = mem.Send(ctx, mailer.Message{To: ""})
-		require.Error(t, err)
-
-		// 验证关闭后发送报错
-		require.NoError(t, mem.Close())
-		err = mem.Send(ctx, msg)
-		require.Error(t, err)
-		assert.Contains(t, err.Error(), "is closed")
+		require.NoError(t, mailCfg.Validate())
+		assert.Equal(t, "mailpit", mailCfg.Driver)
 	})
+}
 
-	t.Run("通过 New 构造 memory 驱动", func(t *testing.T) {
-		client, err := mailer.New(config.MailConfig{Driver: "memory"}, zap.NewNop())
-		require.NoError(t, err)
-		require.NotNil(t, client)
-
-		err = client.Send(context.Background(), mailer.Message{
-			To:      "user@example.com",
-			Subject: "Test",
-			Body:    "Body",
-		})
-		require.NoError(t, err)
-		require.NoError(t, client.Close())
-	})
+func TestDefaultDriverIsMailpit(t *testing.T) {
+	cfg := config.MailConfig{
+		Driver: "",
+	}
+	client, err := mailer.New(cfg, zap.NewNop())
+	require.NoError(t, err)
+	require.NotNil(t, client)
+	if da, ok := client.(interface{ Driver() string }); ok {
+		assert.Equal(t, "mailpit", da.Driver())
+	}
+	require.NoError(t, client.Close())
 }
 
 func TestAttachmentAndAllAttachments(t *testing.T) {
@@ -421,9 +403,18 @@ func TestAttachmentAndAllAttachments(t *testing.T) {
 	})
 }
 
+type mockCustomMailer struct{}
+
+func (m *mockCustomMailer) Send(_ context.Context, _ mailer.Message) error { return nil }
+func (m *mockCustomMailer) SendMailable(_ context.Context, _ string, _ mailer.Mailable) error {
+	return nil
+}
+func (m *mockCustomMailer) Close() error                 { return nil }
+func (m *mockCustomMailer) Ping(_ context.Context) error { return nil }
+
 func TestCustomDriverRegistry(t *testing.T) {
 	mailer.RegisterDriver("custom-mock", func(_ config.MailConfig, _ *zap.Logger) (mailer.Mailer, error) {
-		return mailer.NewMemoryMailer(), nil
+		return &mockCustomMailer{}, nil
 	})
 
 	client, err := mailer.New(config.MailConfig{Driver: "custom-mock"}, zap.NewNop())
@@ -432,36 +423,19 @@ func TestCustomDriverRegistry(t *testing.T) {
 	require.NoError(t, client.Close())
 }
 
-// TestMail_DisabledFallbackToLog 验证当 MAIL_ENABLED=false 时自动降级为 LogMailer。
-func TestMail_DisabledFallbackToLog(t *testing.T) {
-	cfg := config.MailConfig{
-		Enabled:     new(bool), // *Enabled = false
-		Driver:      "mailpit",
-		FromAddress: "test@example.com",
-	}
-	require.False(t, cfg.IsEnabled())
-	require.NoError(t, cfg.Validate())
-
-	client, err := mailer.New(cfg, zap.NewNop())
-	require.NoError(t, err)
-	require.NotNil(t, client)
-
-	err = client.Send(t.Context(), mailer.Message{
-		To:      "user@example.com",
-		Subject: "Test Subject",
-		Body:    "Hello world",
-	})
-	require.NoError(t, err)
-	require.NoError(t, client.Close())
-}
-
-// TestMail_LogAndNullDrivers 验证内置的 log 与 null 驱动正常工作。
-func TestMail_LogAndNullDrivers(t *testing.T) {
-	for _, driver := range []string{"log", "null"} {
+// TestMail_DisabledDelivery 验证当 MAIL_ENABLED=false 时跳过网络投递。
+func TestMail_DisabledDelivery(t *testing.T) {
+	for _, driver := range []string{"mailpit", "resend"} {
 		t.Run(driver, func(t *testing.T) {
 			cfg := config.MailConfig{
-				Driver: driver,
+				Enabled:     new(bool), // *Enabled = false
+				Driver:      driver,
+				FromAddress: "test@example.com",
+				Resend: config.ResendConfig{
+					APIKey: "re_mock_key",
+				},
 			}
+			require.False(t, cfg.IsEnabled())
 			require.NoError(t, cfg.Validate())
 
 			client, err := mailer.New(cfg, zap.NewNop())
@@ -474,37 +448,26 @@ func TestMail_LogAndNullDrivers(t *testing.T) {
 				Body:    "Hello world",
 			})
 			require.NoError(t, err)
-
-			err = client.SendMailable(t.Context(), "user@example.com", &testMailable{
-				subject: "Template Subject",
-				tmpl:    "auth_otp",
-				data:    map[string]any{"code": "123456", "ttl_minutes": 10},
-			})
-			require.NoError(t, err)
 			require.NoError(t, client.Close())
 		})
 	}
 }
 
-// TestMailerPingerContract 验证各 Mailer 驱动均实现 Ping、Driver 与 Enabled 探针契约。
+// TestMailerPingerContract 验证 Mailer 驱动实现 Driver 与 Enabled 探针契约。
 func TestMailerPingerContract(t *testing.T) {
-	t.Run("log_and_null", func(t *testing.T) {
-		logMailer := mailer.NewLogMailer(zap.NewNop())
-		require.NoError(t, logMailer.Ping(t.Context()))
-		assert.Equal(t, "log", logMailer.Driver())
-		assert.True(t, logMailer.Enabled())
-
-		nullMailer := mailer.NewNullMailer()
-		require.NoError(t, nullMailer.Ping(t.Context()))
-		assert.Equal(t, "null", nullMailer.Driver())
-		assert.True(t, nullMailer.Enabled())
-	})
-
-	t.Run("memory", func(t *testing.T) {
-		memMailer := mailer.NewMemoryMailer()
-		require.NoError(t, memMailer.Ping(t.Context()))
-		assert.Equal(t, "memory", memMailer.Driver())
-		assert.True(t, memMailer.Enabled())
+	t.Run("mailpit", func(t *testing.T) {
+		cfg := config.MailConfig{
+			Driver: "mailpit",
+		}
+		client, err := mailer.New(cfg, zap.NewNop())
+		require.NoError(t, err)
+		if da, ok := client.(interface{ Driver() string }); ok {
+			assert.Equal(t, "mailpit", da.Driver())
+		}
+		if ea, ok := client.(interface{ Enabled() bool }); ok {
+			assert.True(t, ea.Enabled())
+		}
+		require.NoError(t, client.Close())
 	})
 
 	t.Run("resend", func(t *testing.T) {
@@ -523,5 +486,6 @@ func TestMailerPingerContract(t *testing.T) {
 		if ea, ok := client.(interface{ Enabled() bool }); ok {
 			assert.True(t, ea.Enabled())
 		}
+		require.NoError(t, client.Close())
 	})
 }

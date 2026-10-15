@@ -7,14 +7,6 @@
         "@upstash/context7-mcp@latest"
       ]
     },
-    "exa": {
-      "command": "npx",
-      "args": [
-        "-y",
-        "mcp-remote",
-        "https://mcp.exa.ai/mcp"
-      ]
-    },
     "ast-grep": {
       "command": "uvx",
       "args": [

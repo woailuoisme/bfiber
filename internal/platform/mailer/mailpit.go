@@ -63,6 +63,14 @@ func (m *mailpitMailer) Send(ctx context.Context, msg Message) error {
 		return errs.BadRequest("email recipient 'To' cannot be empty")
 	}
 
+	if !m.cfg.IsEnabled() {
+		m.logger.Debug("mail delivery is disabled (MAIL_ENABLED=false), skipping send",
+			zap.String("to", maskRecipient(msg.To)),
+			zap.String("subject", msg.Subject),
+		)
+		return nil
+	}
+
 	if m.client == nil {
 		return errs.Internal(errors.New("mailpit client is not initialized"))
 	}
@@ -107,7 +115,7 @@ func (m *mailpitMailer) Ping(ctx context.Context) error {
 	host := cmp.Or(strings.TrimSpace(m.cfg.Mailpit.Host), "127.0.0.1")
 	port := cmp.Or(m.cfg.Mailpit.Port, 1025)
 	addr := net.JoinHostPort(host, strconv.Itoa(port))
-	var d net.Dialer
+	d := net.Dialer{Timeout: 3 * time.Second}
 	conn, err := d.DialContext(ctx, "tcp", addr)
 	if err != nil {
 		return fmt.Errorf("mailpit: tcp dial %s failed: %w", addr, err)

@@ -14,7 +14,6 @@ import (
 	"bfiber/internal/database"
 	"bfiber/internal/database/models"
 	admin "bfiber/internal/features/admin/user"
-	"bfiber/internal/shared/user"
 )
 
 func TestUsersExportContract(t *testing.T) {
@@ -58,7 +57,7 @@ type mockUserFetcher struct {
 	calls int
 }
 
-func (m *mockUserFetcher) List(_ context.Context, _ user.ListFilter, offset, limit int) ([]models.User, error) {
+func (m *mockUserFetcher) List(_ context.Context, _ models.UserListFilter, offset, limit int) ([]models.User, error) {
 	m.calls++
 	if offset >= len(m.users) {
 		return nil, nil
@@ -84,7 +83,7 @@ func TestUsersChunkedExportContract(t *testing.T) {
 
 	fetcher := &mockUserFetcher{users: dataset}
 	chunkSize := 2
-	exp := admin.NewUsersChunkedExport(fetcher, user.ListFilter{}, chunkSize)
+	exp := admin.NewUsersChunkedExport(fetcher, models.UserListFilter{}, chunkSize)
 
 	assert.Equal(t, "Users", exp.Title())
 	assert.Equal(t, []string{"ID", "Name", "Email", "Role", "Status", "Created At"}, exp.Headings())
@@ -104,7 +103,7 @@ func TestUsersChunkedExportContract(t *testing.T) {
 
 	// 验证分块流式导出全量生成真实 XLSX 文件
 	var buf bytes.Buffer
-	err = admin.ExportChunkedStream(t.Context(), &buf, fetcher, user.ListFilter{})
+	err = admin.ExportChunkedStream(t.Context(), &buf, fetcher, models.UserListFilter{})
 	require.NoError(t, err)
 	assert.Positive(t, buf.Len())
 

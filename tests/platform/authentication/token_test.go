@@ -234,8 +234,8 @@ func TestJWTCodec_StatelessOperations(t *testing.T) {
 	assert.Equal(t, "read:all", payload["scope"])
 }
 
-// TestTokenIssuer_AuthenticateToken 验证 TokenIssuer.AuthenticateToken 在有无黑名单下的解析与注入行为。
-func TestTokenIssuer_AuthenticateToken(t *testing.T) {
+// TestTokenIssuer_AuthenticateClaims 验证 TokenIssuer.AuthenticateClaims 在有无黑名单下的解析与注入行为。
+func TestTokenIssuer_AuthenticateClaims(t *testing.T) {
 	store := newMockBlacklistStore()
 	issuer := authentication.NewTokenIssuer(config.JWTConfig{
 		Secret:     testSecret,
@@ -248,8 +248,11 @@ func TestTokenIssuer_AuthenticateToken(t *testing.T) {
 	pair, err := issuer.Issue("usr_auth", "admin")
 	require.NoError(t, err)
 
-	// 1. 正常令牌：认证通过并注入上下文
-	authCtx, claims, err := issuer.AuthenticateToken(ctx, pair.AccessToken)
+	parsedClaims, err := issuer.Parse(pair.AccessToken, authentication.TypeAccess)
+	require.NoError(t, err)
+
+	// 1. 正常声明：认证通过并注入上下文
+	authCtx, claims, err := issuer.AuthenticateClaims(ctx, parsedClaims)
 	require.NoError(t, err)
 	assert.Equal(t, "usr_auth", claims.Subject)
 
@@ -258,11 +261,11 @@ func TestTokenIssuer_AuthenticateToken(t *testing.T) {
 	assert.Equal(t, "usr_auth", id.UserID)
 	assert.Equal(t, "admin", id.Role)
 
-	// 2. 撤销后令牌：认证失败（返回 CodeAuthTokenRevoked）
+	// 2. 撤销后声明：认证失败（返回 CodeAuthTokenRevoked）
 	err = issuer.Revoke(ctx, claims)
 	require.NoError(t, err)
 
-	_, _, err = issuer.AuthenticateToken(ctx, pair.AccessToken)
+	_, _, err = issuer.AuthenticateClaims(ctx, parsedClaims)
 	require.Error(t, err)
 	bizErr, ok := errs.As(err)
 	require.True(t, ok)

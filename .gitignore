@@ -155,6 +155,7 @@ skills-lock.json
 .codebuddy
 .workbuddy
 .workbuddy-ai
+scratch
 
 # ------------------------------------------
 # Docs: 只跟踪 ADR，其余不入库

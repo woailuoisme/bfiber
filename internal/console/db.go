@@ -204,8 +204,10 @@ func (o *DBFreshOptions) Run(ctx context.Context) error {
 	}
 
 	core.TitleTo(streams.Out, "Rebuilding public schema...")
+	// 设置短暂锁超时，防止因其他残留连接占用排他锁而导致终端无限期阻塞
+	_, _ = db.ExecContext(ctx, "SET lock_timeout = '10s'")
 	if _, err := db.ExecContext(ctx, "DROP SCHEMA IF EXISTS public CASCADE"); err != nil {
-		return fmt.Errorf("failed to drop public schema: %w", err)
+		return fmt.Errorf("failed to drop public schema (ensure no other clients are locking the database): %w", err)
 	}
 	if _, err := db.ExecContext(ctx, "CREATE SCHEMA public"); err != nil {
 		return fmt.Errorf("failed to recreate public schema: %w", err)

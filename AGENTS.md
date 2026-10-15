@@ -66,7 +66,7 @@ internal/
 ├── bootstrap/                  # 依赖组装、引擎初始化与服务生命周期管理
 ├── config/                     # 基于 caarlos0/env 的强类型环境配置加载
 ├── console/                    # Artisan 风格 CLI 命令（serve, db:seed, db:fresh）
-├── database/                   # Bun ORM 客户端、事务工作单元、Base 实体基座与通用 Active Record 泛型引擎
+├── database/                   # Bun ORM 客户端、事务工作单元与 Base 实体基座
 │   ├── models/                 # 数据库表实体模型（Account, User, Verification 等）
 │   └── schemas/                # 声明式目标 DDL（Atlas 迁移计算的事实源）
 ├── features/                   # 垂直领域切片（核心业务逻辑）
@@ -95,8 +95,7 @@ internal/
 │   ├── events/                 # 跨切片领域事件模型
 │   ├── indexes/                # 全文检索索引器定义与集中装配
 │   ├── media/                  # 媒体处理、验证、签名与多态附件管理（基于 storage 与 models）
-│   ├── notification/           # 跨切片通知类型与数据载荷
-│   └── user/                   # 共享 User View、字段约束与基础查询契约
+│   └── notification/           # 跨切片通知类型与数据载荷
 tests/                          # 外部测试包（测试代码与业务逻辑彻底解耦）
 └── integration/                # 真实外部依赖的集成测试（声明 //go:build integration）
 ```
@@ -138,7 +137,7 @@ tests/                          # 外部测试包（测试代码与业务逻辑�
      - **避免连接池枯竭与无谓 I/O**：防止恶意无效请求在反序列化阶段即耗尽 DB 连接池。
    - **唯一性与外键存在性标准实现范式**：
      1. **唯一性冲突 (Unique)**：由 Service 层业务查重判断 + **PostgreSQL 原生唯一索引（`UNIQUE INDEX`）作为终极防线**。底层 `23505 (pgErrUniqueViolation)` 由 `internal/platform/errs/render.go` 集中自动翻译为 409 Conflict 或特定业务错误码，业务层无需手动处理底层 SQL 异常。
-     2. **外键与关联存在性 (Exists)**：遵循「查完即用 (Fetch-Once)」原则，在 Service 层使用强类型 Repository 或 Active Record 直接查询实体；若实体不存在立即返回 `errs.NotFound`，彻底杜绝在 Validator 查一次存在性、在 Service 又查一次实体的低效双重查询。
+     2. **外键与关联存在性 (Exists)**：遵循「查完即用 (Fetch-Once)」原则，在 Service 层使用强类型 Repository 或原生 Bun ORM 直接查询实体；若实体不存在立即返回 `errs.NotFound`，彻底杜绝在 Validator 查一次存在性、在 Service 又查一次实体的低效双重查询。
      3. **复杂跨字段复合校验**：统一通过让 DTO 实现 `Validatable` 接口（`Validate() error`），由 Fiber StructValidator 自动触发，保持声明式 Tag 验证基础格式与命令式 Hook 验证业务联动职责清晰。
 
 ---
@@ -244,7 +243,7 @@ tests/                          # 外部测试包（测试代码与业务逻辑�
 - **运行期外部服务宕机**：`/readyz` 秒级将流量自动排空摘除，杜绝雪崩扩散；恢复后秒级自动回切。
 
 #### 3. 高频探针日志健康静默纪律 (Probe Health Silence)
-- 为避免本地开发与生产容器探针高频轮询（每 2~3 秒一次）导致控制台与集中式日志系统被正常心跳日志刷屏，中间件 [internal/middleware/global/observability.go](file:///Users/seaside/Projects/backend/go/fiber-bun/internal/middleware/global/observability.go#L64-L67) **在 `status < 400` 时对 `/livez` 与 `/readyz` 实行完全静默，不记录访问日志**。
+- 为避免本地开发与生产容器探针高频轮询（每 2~3 秒一次）导致控制台与集中式日志系统被正常心跳日志刷屏，中间件 [internal/middleware/observability.go](file:///Users/seaside/Projects/backend/go/fiber-bun/internal/middleware/observability.go#L64-L67) **在 `status < 400` 时对 `/livez` 与 `/readyz` 实行完全静默，不记录访问日志**。
 - 一旦探针出现任何异常（`status >= 400` 或 `>= 500`），强制保留 `Warn` 或 `Error` 级别结构化日志与堆栈，确保 APM 告警与应急排障无死角。
 
 ---
@@ -327,9 +326,9 @@ tests/                          # 外部测试包（测试代码与业务逻辑�
 
 ### 5.4 Swagger 已知坑点与类型规避 (Known Swagger Pitfalls)
 - **注解格式扁平化**：保持扁平化 OpenAPI/Swagger 注解规范，**严禁使用 `oneOf` 冗余包装**。
-- ⚠️ **`swag` 跨包类型解析缺陷与别名避坑**：
-  - **现象**：`swag` 在解析跨包结构体引用（如跨包直接声明 `{object} user.Profile`）时存在编译器缺陷，极易偶发报 `cannot find type definition` 导致 `just docs` 失败。
-  - **强制规则**：涉及跨包引用的结构体，必须在当前 handler 包内定义一层本地同名类型别名（例如在 [internal/features/client/profile/](file:///Users/seaside/Projects/backend/go/fiber-bun/internal/features/client/profile/response.go) 中显式声明 `type Profile = user.Profile`）。修改或重构相关代码时**严禁误删此类类型别名**！
+- ⚠️ **`swag` 跨包类型解析缺陷与 DTO 本地内聚原则**：
+  - **现象**：`swag` 在解析跨包结构体引用时存在编译器缺陷，极易偶发报 `cannot find type definition` 导致 `just docs` 失败。
+  - **强制规则**：各 Feature 切片必须完全内聚自身的 DTO（`ProfileResource`、`UserResource`、`AdminUser` 等），杜绝跨包引用外部共享实体视图；若必须引用枚举（如 `enums.Role`），在包内提供本地类型别名（如 `type Role = enums.Role`）。
 - **三态字段 Swagger 类型修正**：使用三态值容器 `omitnull.Val[T]` (`aarondl/opt`) 的字段必须显式附加 `swaggertype:"string" extensions:"x-nullable"`（或对应基础标量类型），防止泛型容器被展开为 `{state, val}`。
 
 ---

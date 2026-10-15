@@ -26,20 +26,11 @@ func (a *Application) Serve(ctx context.Context) error {
 	srvCfg := a.cfg.App.Server
 	addr := fmt.Sprintf(":%d", a.cfg.App.Port)
 
+	// 注册生命周期钩子：通过 Fiber v3 原生 OnListen 获取真实监听元数据，通过 OnPostShutdown 触发资源回收。
+	a.registerLifecycleHooks()
+
 	errCh := make(chan error, 2)
 	go func() {
-		base := a.serverURL()
-		fields := []zap.Field{
-			zap.String("addr", addr),
-			zap.String("url", base),
-			zap.String("env", a.cfg.App.Env),
-			zap.String("storage", a.cfg.Storage.Driver),
-		}
-		if a.cfg.App.EnableDocs {
-			fields = append(fields, zap.String("docs", base+docsPagePath))
-		}
-		a.logger.Info("HTTP server started and listening", fields...)
-
 		listenCfg := fiber.ListenConfig{
 			DisableStartupMessage: true,
 		}
@@ -74,4 +65,28 @@ func (a *Application) Serve(ctx context.Context) error {
 		return fmt.Errorf("graceful shutdown failed: %w", err)
 	}
 	return nil
+}
+
+// registerLifecycleHooks 注册 Fiber 引擎生命周期钩子，实现监听就绪与停机清理的统一编排。
+func (a *Application) registerLifecycleHooks() {
+	a.engine.Hooks().OnListen(func(ld fiber.ListenData) error {
+		base := a.serverURL()
+		listenAddr := fmt.Sprintf("%s:%s", ld.Host, ld.Port)
+		if ld.Host == "" {
+			listenAddr = ":" + ld.Port
+		}
+		fields := []zap.Field{
+			zap.String("addr", listenAddr),
+			zap.String("url", base),
+			zap.String("env", a.cfg.App.Env),
+			zap.String("storage", a.cfg.Storage.Driver),
+			zap.Int("pid", ld.PID),
+			zap.Bool("tls", ld.TLS),
+		}
+		if a.cfg.App.EnableDocs {
+			fields = append(fields, zap.String("docs", base+docsPagePath))
+		}
+		a.logger.Info("HTTP server started and listening", fields...)
+		return nil
+	})
 }

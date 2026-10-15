@@ -431,9 +431,9 @@ func (g *Guard[T]) LogoutAll(ctx context.Context) error {
 	return g.InvalidateAll(ctx, id.UserID)
 }
 
-// AuthenticateToken 校验并解析原始令牌，在黑名单检查与策略通过后注入请求上下文（对应 jwt-auth 的 setToken）。
-func (g *Guard[T]) AuthenticateToken(ctx context.Context, rawToken string) (context.Context, *Claims, error) {
-	newCtx, claims, err := g.tokens.AuthenticateToken(ctx, rawToken)
+// AuthenticateClaims 基于已解析声明，在黑名单检查与策略通过后注入请求上下文。
+func (g *Guard[T]) AuthenticateClaims(ctx context.Context, claims *Claims) (context.Context, *Claims, error) {
+	newCtx, claims, err := g.tokens.AuthenticateClaims(ctx, claims)
 	if err != nil {
 		return ctx, nil, err
 	}
@@ -453,9 +453,13 @@ func (g *Guard[T]) AuthenticateToken(ctx context.Context, rawToken string) (cont
 	return newCtx, claims, nil
 }
 
-// SetToken 显式注入并认证原始令牌（对应 jwt-auth 的 setToken）。
+// SetToken 显式注入并认证原始令牌（解析后委托给 AuthenticateClaims）。
 func (g *Guard[T]) SetToken(ctx context.Context, rawToken string) (context.Context, error) {
-	newCtx, _, err := g.AuthenticateToken(ctx, rawToken)
+	claims, err := g.tokens.Parse(rawToken, TypeAccess)
+	if err != nil {
+		return ctx, err
+	}
+	newCtx, _, err := g.AuthenticateClaims(ctx, claims)
 	return newCtx, err
 }
 

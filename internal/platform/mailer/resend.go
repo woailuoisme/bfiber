@@ -62,6 +62,14 @@ func (m *resendMailer) Send(ctx context.Context, msg Message) error {
 		return errs.BadRequest("email recipient 'To' cannot be empty")
 	}
 
+	if !m.cfg.IsEnabled() {
+		m.logger.Debug("mail delivery is disabled (MAIL_ENABLED=false), skipping send",
+			zap.String("to", maskRecipient(msg.To)),
+			zap.String("subject", msg.Subject),
+		)
+		return nil
+	}
+
 	reqPayload, err := m.buildRequest(msg)
 	if err != nil {
 		return err

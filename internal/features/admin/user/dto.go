@@ -8,10 +8,10 @@ import (
 
 	"bfiber/internal/database"
 	"bfiber/internal/database/models"
+	"bfiber/internal/platform/errs"
 	"bfiber/internal/platform/response"
 	"bfiber/internal/platform/validator"
 	"bfiber/internal/shared/enums"
-	"bfiber/internal/shared/user"
 )
 
 func init() {
@@ -36,9 +36,6 @@ type Role = enums.Role
 // Status 是账号状态枚举的本地类型别名，规避 swag 跨包解析缺陷。
 type Status = enums.Status
 
-// Profile 是共享内核档案视图的类型别名，供本模块的响应体与 Swagger 注解引用。
-type Profile = user.Profile
-
 // --- 路径参数 PathParams ---
 
 // UserPathParams 是用户唯一标识的路径参数。
@@ -46,15 +43,6 @@ type UserPathParams struct {
 	// 用户唯一标识
 	ID string `uri:"id" json:"id" example:"usr_01J9X4N8Y0ABCD" validate:"required"`
 }
-
-// GetUserPathParams 是 GET /v1/admin/users/:id 的路径参数。
-type GetUserPathParams = UserPathParams
-
-// UpdateUserPathParams 是 PATCH /v1/admin/users/:id 的路径参数。
-type UpdateUserPathParams = UserPathParams
-
-// DeleteUserPathParams 是 DELETE /v1/admin/users/:id 的路径参数。
-type DeleteUserPathParams = UserPathParams
 
 // --- 请求体 Body ---
 
@@ -104,34 +92,109 @@ type UpdateUserBody struct {
 
 // Validate 实现 Validatable 契约，阻断库层非空字段的显式置空。
 func (r UpdateUserBody) Validate() error {
+	var errsMap map[string][]string
+	addErr := func(field, msg string) {
+		if errsMap == nil {
+			errsMap = make(map[string][]string)
+		}
+		errsMap[field] = append(errsMap[field], msg)
+	}
 	if r.Name.IsNull() {
-		return user.FieldCannotBeNull("name")
+		addErr("name", "cannot be null")
 	}
 	if r.Role.IsNull() {
-		return user.FieldCannotBeNull("role")
+		addErr("role", "cannot be null")
 	}
 	if r.Status.IsNull() {
-		return user.FieldCannotBeNull("status")
+		addErr("status", "cannot be null")
+	}
+	if len(errsMap) > 0 {
+		return errs.Validation(errsMap)
 	}
 	return nil
 }
 
-// adminFieldSet 将请求中的档案与管理受控字段投影为共享内核管理字段集。
-func (r UpdateUserBody) adminFieldSet() user.AdminFieldSet {
-	return user.AdminFieldSet{
-		FieldSet: user.FieldSet{
-			Name:            r.Name,
-			Image:           r.Image,
-			Username:        r.Username,
-			DisplayUsername: r.DisplayUsername,
-			PhoneNumber:     r.PhoneNumber,
-		},
-		EmailVerified: r.EmailVerified,
-		Role:          r.Role,
-		Status:        r.Status,
-		Banned:        r.Banned,
-		BanReason:     r.BanReason,
-		BanExpires:    r.BanExpires,
+// ToFields 把管理端更新请求直接转换为数据库可写字段字典。
+func (r UpdateUserBody) ToFields() map[string]any {
+	fields := make(map[string]any, 10)
+	if !r.Name.IsUnset() && !r.Name.IsNull() {
+		fields["name"] = strings.TrimSpace(r.Name.MustGet())
+	}
+	if !r.Image.IsUnset() {
+		setNullable(fields, "image", r.Image)
+	}
+	if !r.PhoneNumber.IsUnset() {
+		setNullable(fields, "phone_number", r.PhoneNumber)
+	}
+	setUsernameFields(fields, r.Username, r.DisplayUsername.IsUnset())
+	if !r.DisplayUsername.IsUnset() {
+		setNullable(fields, "display_username", r.DisplayUsername)
+	}
+	if r.EmailVerified.IsValue() {
+		fields["email_verified"] = r.EmailVerified.MustGet()
+	}
+	if !r.Role.IsUnset() && !r.Role.IsNull() {
+		fields["role"] = r.Role.MustGet()
+	}
+	if !r.Status.IsUnset() && !r.Status.IsNull() {
+		fields["status"] = r.Status.MustGet()
+	}
+	setBanFields(fields, r.Banned, r.BanReason, r.BanExpires)
+	return fields
+}
+
+func setUsernameFields(fields map[string]any, username omitnull.Val[string], displayUnset bool) {
+	if username.IsUnset() {
+		return
+	}
+	if username.IsNull() {
+		fields["username"] = nil
+		fields["display_username"] = nil
+		return
+	}
+	raw := strings.TrimSpace(username.MustGet())
+	if raw == "" {
+		fields["username"] = nil
+		fields["display_username"] = nil
+		return
+	}
+	fields["username"] = models.NormaliseUsername(raw)
+	if displayUnset {
+		fields["display_username"] = raw
+	}
+}
+
+func setBanFields(
+	fields map[string]any,
+	banned omitnull.Val[bool],
+	reason omitnull.Val[string],
+	expires omitnull.Val[time.Time],
+) {
+	if banned.IsValue() {
+		fields["banned"] = banned.MustGet()
+	}
+	if !reason.IsUnset() {
+		setNullable(fields, "ban_reason", reason)
+	}
+	if !expires.IsUnset() {
+		if t, ok := expires.Get(); ok {
+			fields["ban_expires"] = t.UTC()
+		} else {
+			fields["ban_expires"] = nil
+		}
+	}
+}
+
+func setNullable(fields map[string]any, column string, value omitnull.Val[string]) {
+	if value.IsNull() {
+		fields[column] = nil
+		return
+	}
+	trimmed := strings.TrimSpace(value.MustGet())
+	if trimmed == "" {
+		fields[column] = nil
+	} else {
+		fields[column] = trimmed
 	}
 }
 
@@ -144,7 +207,7 @@ type ListUsersQueryParams struct {
 	// 每页条数 (1-100，默认 20)
 	PageSize int `form:"pageSize" json:"pageSize" query:"pageSize" example:"20" validate:"omitempty,min=1,max=100"`
 	// 排序字段 (字段名前加 - 表示倒序，如 -createdAt)
-	Sort string `form:"sort" json:"sort" query:"sort" example:"-createdAt" validate:"omitempty,usersort,max=120"`
+	Sort string `form:"sort" json:"sort" query:"sort" example:"-createdAt" validate:"omitempty,max=120"`
 	// 关键字搜索 (按邮箱、昵称、用户名模糊检索)
 	Search string `form:"search" json:"search" query:"search" example:"alex" validate:"omitempty,max=120"`
 	// 按账号状态过滤 (active: 正常活跃, inactive: 未激活, banned: 已封禁)
@@ -153,13 +216,36 @@ type ListUsersQueryParams struct {
 	Role Role `form:"role" json:"role" query:"role" example:"user" enums:"user,admin" validate:"omitempty,oneof=user admin"`
 }
 
+// Validate 校验排序参数，要求每个逗号分隔的字段均在 models.UserSortColumns 白名单中。
+func (r ListUsersQueryParams) Validate() error {
+	raw := strings.TrimSpace(r.Sort)
+	if raw == "" {
+		return nil
+	}
+	for part := range strings.SplitSeq(raw, ",") {
+		part = strings.TrimSpace(part)
+		if part == "" {
+			return errs.Validation(map[string][]string{
+				"sort": {"invalid sort format"},
+			})
+		}
+		part = strings.TrimPrefix(part, "-")
+		if _, ok := models.UserSortColumns[part]; !ok {
+			return errs.Validation(map[string][]string{
+				"sort": {"disallowed sort column: " + part},
+			})
+		}
+	}
+	return nil
+}
+
 // ToFilter 将 HTTP 查询参数投影为底层仓储过滤条件，内聚修剪与排序归一化规则。
 func (r ListUsersQueryParams) ToFilter() models.UserListFilter {
 	return models.UserListFilter{
 		Search: strings.TrimSpace(r.Search),
 		Status: enums.Status(strings.TrimSpace(string(r.Status))),
 		Role:   enums.Role(strings.TrimSpace(string(r.Role))),
-		Sort:   user.NormaliseSort(r.Sort),
+		Sort:   models.NormaliseUserSort(r.Sort),
 	}
 }
 
@@ -167,7 +253,30 @@ func (r ListUsersQueryParams) ToFilter() models.UserListFilter {
 
 // UserResource 是管理端视角的系统用户视图模型。
 type UserResource struct {
-	Profile
+	// 用户唯一标识
+	ID string `json:"id" example:"usr_01J9X4N8Y0ABCD"`
+	// 用户展示昵称
+	Name string `json:"name" example:"Alex Mercer"`
+	// 用户电子邮箱
+	Email string `json:"email" example:"alex@example.com"`
+	// 邮箱是否已验证
+	EmailVerified bool `json:"emailVerified" example:"true"`
+	// 用户头像 URL
+	Image *string `json:"image" example:"https://example.com/avatar.png"`
+	// 用户权限角色 (user: 普通用户, admin: 系统管理员)
+	Role Role `json:"role" example:"user" enums:"user,admin"`
+	// 账号状态 (active: 正常活跃, inactive: 未激活, banned: 已封禁)
+	Status Status `json:"status" example:"active" enums:"active,inactive,banned"`
+	// 唯一登录用户名
+	Username *string `json:"username" example:"alexmercer"`
+	// 用户显示名称
+	DisplayUsername *string `json:"displayUsername" example:"Alex Mercer"`
+	// E.164 格式手机号
+	PhoneNumber *string `json:"phoneNumber" example:"+8613800138000"`
+	// 账号创建时间 (ISO 8601 UTC)
+	CreatedAt time.Time `json:"createdAt" example:"2026-09-27T10:00:00Z"`
+	// 账号更新时间 (ISO 8601 UTC)
+	UpdatedAt time.Time `json:"updatedAt" example:"2026-09-27T10:00:00Z"`
 
 	// 账号是否已被封禁
 	Banned bool `json:"banned" example:"false"`
@@ -192,7 +301,18 @@ type UserPageResource struct {
 // toUserResource 把模型投影为管理视角的响应资源。
 func toUserResource(entity *models.User) UserResource {
 	return UserResource{
-		Profile:         user.ProjectProfile(entity),
+		ID:              entity.ID,
+		Name:            entity.Name,
+		Email:           entity.Email,
+		EmailVerified:   entity.EmailVerified,
+		Image:           entity.Image,
+		Role:            entity.Role,
+		Status:          entity.Status,
+		Username:        entity.Username,
+		DisplayUsername: entity.DisplayUsername,
+		PhoneNumber:     entity.PhoneNumber,
+		CreatedAt:       entity.CreatedAt.UTC(),
+		UpdatedAt:       entity.UpdatedAt.UTC(),
 		Banned:          entity.Banned,
 		BanReason:       entity.BanReason,
 		BanExpires:      database.UTCPtr(entity.BanExpires),
@@ -200,11 +320,3 @@ func toUserResource(entity *models.User) UserResource {
 		LastLoginMethod: entity.LastLoginMethod,
 	}
 }
-
-type (
-	CreateUserRequest = CreateUserBody
-	UpdateUserRequest = UpdateUserBody
-	ListUsersQuery    = ListUsersQueryParams
-	User              = UserResource
-	UserPage          = UserPageResource
-)

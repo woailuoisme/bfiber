@@ -6,13 +6,13 @@ import (
 
 // SentryConfig 描述 Sentry / GlitchTip 异常监控与性能追踪配置。
 type SentryConfig struct {
-	Enabled          *bool   `mapstructure:"sentry_enabled"`
-	DSN              string  `mapstructure:"sentry_dsn"`
-	GlitchTipDSN     string  `mapstructure:"glitchtip_dsn"`
-	Environment      string  `mapstructure:"sentry_environment"`
-	Release          string  `mapstructure:"sentry_release"`
-	TracesSampleRate float64 `mapstructure:"sentry_traces_sample_rate"`
-	Debug            bool    `mapstructure:"sentry_debug"`
+	Enabled          *bool   `env:"SENTRY_ENABLED" envDefault:"false"`
+	DSN              string  `env:"SENTRY_DSN"`
+	GlitchTipDSN     string  `env:"GLITCHTIP_DSN"`
+	Environment      string  `env:"SENTRY_ENVIRONMENT"`
+	Release          string  `env:"SENTRY_RELEASE"`
+	TracesSampleRate float64 `env:"SENTRY_TRACES_SAMPLE_RATE" envDefault:"0.01"`
+	Debug            bool    `env:"SENTRY_DEBUG" envDefault:"false"`
 }
 
 // EffectiveDSN 获取有效 DSN（优先 SENTRY_DSN，回退 GLITCHTIP_DSN）。

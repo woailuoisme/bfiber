@@ -22,16 +22,6 @@ type Verification struct {
 
 var _ database.Model = (*Verification)(nil)
 
-// VerificationQuery 返回针对 Verification 实体的泛型查询构造器。
-func VerificationQuery(db bun.IDB) *database.Query[Verification] {
-	return database.NewQuery[Verification](db)
-}
-
-// VerificationQueryFrom 优先从上下文提取活跃数据库或事务，无则回退至 fallback。
-func VerificationQueryFrom(ctx context.Context, fallback bun.IDB) *database.Query[Verification] {
-	return database.NewQueryFrom[Verification](ctx, fallback)
-}
-
 // SaveVerification 覆盖式写入一次性凭据：同一 identifier 只保留最新一条。
 // 若上层已在活跃事务中，则复用现有事务；否则通过事务保证清理与插入原子执行。
 func SaveVerification(ctx context.Context, db bun.IDB, identifier, value string, expiresAt time.Time) error {
@@ -47,29 +37,41 @@ func SaveVerification(ctx context.Context, db bun.IDB, identifier, value string,
 		return record.Insert(ctx, idb)
 	}
 
-	if tx, ok := db.(bun.Tx); ok {
+	targetDB := database.ResolveDB(ctx, db)
+	switch tx := targetDB.(type) {
+	case bun.Tx:
+		return run(tx)
+	case *bun.Tx:
 		return run(tx)
 	}
-	if bdb := database.UnwrapBunDB(db); bdb != nil {
+	if bdb := database.UnwrapBunDB(targetDB); bdb != nil {
 		return bdb.RunInTx(ctx, nil, func(_ context.Context, tx bun.Tx) error {
 			return run(tx)
 		})
 	}
-	return run(db)
+	return run(targetDB)
 }
 
 // FindVerification 取出某 identifier 的唯一一条凭据；不存在时返回 sql.ErrNoRows（优先从上下文感知活跃事务）。
 func FindVerification(ctx context.Context, db bun.IDB, identifier string) (*Verification, error) {
-	return VerificationQueryFrom(ctx, db).
-		Where("?TableAlias.identifier = ?", identifier).
-		First(ctx)
+	v := new(Verification)
+	err := database.ResolveDB(ctx, db).NewSelect().
+		Model(v).
+		Where("v.identifier = ?", identifier).
+		Scan(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return v, nil
 }
 
 // DeleteVerification 按主键删除已核销或已过期的凭据。
 func DeleteVerification(ctx context.Context, db bun.IDB, id string) error {
-	v := &Verification{}
-	v.ID = id
-	return database.ForceDelete(ctx, db, v)
+	_, err := database.ResolveDB(ctx, db).NewDelete().
+		Model((*Verification)(nil)).
+		Where("id = ?", id).
+		Exec(ctx)
+	return err
 }
 
 // ConsumeVerification 原子核销一枚凭据，通过单条 compare-and-delete 语句保证并发安全（自动透传上下文活跃事务）。
@@ -90,17 +92,14 @@ func ConsumeVerification(ctx context.Context, db bun.IDB, identifier, value stri
 	return affected == 1, nil
 }
 
-// Save 保存凭据记录（自动决策插入或更新）。
-func (v *Verification) Save(ctx context.Context, db bun.IDB) error {
-	return database.Save(ctx, db, v)
-}
-
 // Insert 将凭据记录插入数据库。
 func (v *Verification) Insert(ctx context.Context, db bun.IDB) error {
-	return database.Insert(ctx, db, v)
+	_, err := database.ResolveDB(ctx, db).NewInsert().Model(v).Exec(ctx)
+	return err
 }
 
 // Delete 删除凭据记录。
 func (v *Verification) Delete(ctx context.Context, db bun.IDB) error {
-	return database.ForceDelete(ctx, db, v)
+	_, err := database.ResolveDB(ctx, db).NewDelete().Model(v).WherePK().Exec(ctx)
+	return err
 }

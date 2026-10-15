@@ -13,7 +13,6 @@ import (
 	"bfiber/internal/platform/hasher"
 	"bfiber/internal/platform/validator"
 	"bfiber/internal/shared/enums"
-	shareduser "bfiber/internal/shared/user"
 )
 
 // Deps 声明管理员认证服务的外部依赖。
@@ -35,8 +34,8 @@ type Service struct {
 func NewService(deps Deps) *Service {
 	guard := deps.Guard
 	if guard == nil && deps.Tokens != nil && deps.DB != nil {
-		provider := shareduser.NewProvider(deps.DB, deps.Hasher)
-		guard = authentication.NewGuard(deps.Tokens, provider, shareduser.AdminPolicy{})
+		provider := models.NewUserProvider(deps.DB, deps.Hasher)
+		guard = authentication.NewGuard(deps.Tokens, provider, models.AdminPolicy{})
 	}
 	return &Service{
 		db:     deps.DB,
@@ -55,7 +54,7 @@ func (s *Service) SignInEmail(ctx context.Context, body SignInEmailBody) (Sessio
 		Password: body.Password,
 	})
 	if err != nil {
-		if errors.Is(err, shareduser.ErrRoleRestricted) {
+		if errors.Is(err, models.ErrRoleRestricted) {
 			return SessionResource{}, errs.InvalidCredentials()
 		}
 		return SessionResource{}, err
@@ -75,7 +74,7 @@ func (s *Service) GetSession(ctx context.Context, userID string) (GetSessionReso
 		}
 	}
 
-	return GetSessionResource{User: shareduser.ProjectProfile(user)}, nil
+	return GetSessionResource{User: toAdminUser(user)}, nil
 }
 
 // loadAdmin 兜底加载管理员实体并进行状态校验。
@@ -99,7 +98,7 @@ func (s *Service) loadAdmin(ctx context.Context, userID string) (*models.User, e
 	if u.Role != enums.RoleAdmin {
 		return nil, errs.Forbidden("Access restricted to administrators")
 	}
-	if err := shareduser.GuardState(u); err != nil {
+	if err := u.GuardState(); err != nil {
 		return nil, err
 	}
 	return u, nil
@@ -128,7 +127,7 @@ func toSessionResource(sess authentication.Session, user *models.User) SessionRe
 		Token:        sess.Token,
 		RefreshToken: sess.RefreshToken,
 		ExpiresIn:    sess.ExpiresIn,
-		User:         shareduser.ProjectProfile(user),
+		User:         toAdminUser(user),
 	}
 }
 

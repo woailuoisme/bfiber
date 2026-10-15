@@ -12,9 +12,9 @@ func RegisterRoutes(router fiber.Router, handler *Handler, _ *middleware.Middlew
 	group := router.Group("/payments")
 
 	// 异步回调通知端点：支持默认应用与多租户/多应用
-	group.Post("/notify/:channel", handler.HandleNotification)
-	group.Post("/notify/:channel/:app", handler.HandleNotification)
+	group.Post("/notify/:channel", handler.HandleNotification).Name("payments.notify.channel")
+	group.Post("/notify/:channel/:app", handler.HandleNotification).Name("payments.notify.channel_app")
 
 	// 支付宝前端同步重定向端点
-	group.Get("/return/alipay", handler.HandleAlipayReturn)
+	group.Get("/return/alipay", handler.HandleAlipayReturn).Name("payments.return.alipay")
 }

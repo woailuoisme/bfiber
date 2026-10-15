@@ -8,30 +8,30 @@ import (
 	"time"
 )
 
-// knownEnvs 声明 APP_ENV 合法环境名清单。
-var knownEnvs = []string{"local", "development", "test", "staging", "production"}
+// knownEnvs 声明 APP_ENV 合法环境名清单（定长数组确保不可变语义）。
+var knownEnvs = [...]string{"local", "development", "test", "staging", "production"}
 
 // AppConfig 描述进程核心运行参数（对齐 Laravel config/app.php）。
 type AppConfig struct {
-	Name       string           `mapstructure:"app_name"`
-	Env        string           `mapstructure:"app_env"`
-	Debug      bool             `mapstructure:"app_debug"`
-	Port       int              `mapstructure:"app_port"`
-	EnableDocs bool             `mapstructure:"enable_docs"`
-	URL        string           `mapstructure:"app_url"`
-	Timezone   string           `mapstructure:"app_timezone"`
-	Server     HTTPServerConfig `mapstructure:",squash"`
+	Name       string `env:"APP_NAME" envDefault:"bfiber"`
+	Env        string `env:"APP_ENV" envDefault:"local"`
+	Debug      bool   `env:"APP_DEBUG" envDefault:"false"`
+	Port       int    `env:"APP_PORT" envDefault:"3331"`
+	EnableDocs bool   `env:"ENABLE_DOCS" envDefault:"false"`
+	URL        string `env:"APP_URL" envDefault:"http://localhost:3331"`
+	Timezone   string `env:"APP_TIMEZONE" envDefault:"UTC"`
+	Server     HTTPServerConfig
 }
 
 // HTTPServerConfig 描述 HTTP 传输层超时与缓冲区预算。
 type HTTPServerConfig struct {
-	ReadHeaderTimeout time.Duration `mapstructure:"http_read_header_timeout"`
-	ReadTimeout       time.Duration `mapstructure:"http_read_timeout"`
-	WriteTimeout      time.Duration `mapstructure:"http_write_timeout"`
-	IdleTimeout       time.Duration `mapstructure:"http_idle_timeout"`
-	ShutdownTimeout   time.Duration `mapstructure:"http_shutdown_timeout"`
-	MaxHeaderBytes    int           `mapstructure:"http_max_header_bytes"`
-	RequestTimeout    time.Duration `mapstructure:"http_request_timeout"`
+	ReadHeaderTimeout time.Duration `env:"HTTP_READ_HEADER_TIMEOUT" envDefault:"10s"`
+	ReadTimeout       time.Duration `env:"HTTP_READ_TIMEOUT" envDefault:"15s"`
+	WriteTimeout      time.Duration `env:"HTTP_WRITE_TIMEOUT" envDefault:"35s"`
+	IdleTimeout       time.Duration `env:"HTTP_IDLE_TIMEOUT" envDefault:"120s"`
+	ShutdownTimeout   time.Duration `env:"HTTP_SHUTDOWN_TIMEOUT" envDefault:"3s"`
+	MaxHeaderBytes    int           `env:"HTTP_MAX_HEADER_BYTES" envDefault:"1048576"`
+	RequestTimeout    time.Duration `env:"HTTP_REQUEST_TIMEOUT" envDefault:"15s"`
 }
 
 // Location 返回配置的时区 *time.Location，未设置或解析失败时回退至 time.UTC。
@@ -54,8 +54,8 @@ func (c *Config) IsProduction() bool {
 
 // validateApp 检查应用环境标识与时区配置合法性。
 func (c *Config) validateApp() error {
-	if !slices.Contains(knownEnvs, c.App.Env) {
-		return fmt.Errorf("config: APP_ENV=%q is not a valid value, options: %s", c.App.Env, strings.Join(knownEnvs, " / "))
+	if !slices.Contains(knownEnvs[:], c.App.Env) {
+		return fmt.Errorf("config: APP_ENV=%q is not a valid value, options: %s", c.App.Env, strings.Join(knownEnvs[:], " / "))
 	}
 	if c.App.Timezone != "" {
 		if _, err := time.LoadLocation(c.App.Timezone); err != nil {

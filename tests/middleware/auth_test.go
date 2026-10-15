@@ -12,18 +12,17 @@ import (
 	"time"
 
 	"github.com/gofiber/fiber/v3"
+	"github.com/gofiber/fiber/v3/extractors"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
 	"bfiber/internal/config"
 	"bfiber/internal/database/models"
 	"bfiber/internal/middleware"
-	"bfiber/internal/middleware/global"
 	"bfiber/internal/platform/authentication"
 	"bfiber/internal/platform/authorization"
 	"bfiber/internal/platform/cache"
 	"bfiber/internal/platform/errs"
-	"bfiber/internal/shared/user"
 )
 
 type memAuthBlacklistStore struct {
@@ -104,8 +103,8 @@ func setupAuthEnv() (
 	}, store)
 
 	repo := newMockUserRepo()
-	clientGuard := authentication.NewGuard(tokens, repo, user.ClientPolicy{})
-	adminGuard := authentication.NewGuard(tokens, repo, user.AdminPolicy{})
+	clientGuard := authentication.NewGuard(tokens, repo, models.ClientPolicy{})
+	adminGuard := authentication.NewGuard(tokens, repo, models.AdminPolicy{})
 
 	mgr := authentication.NewManager()
 	mgr.Register("client", clientGuard)
@@ -131,7 +130,7 @@ func TestAuth_MissingOrMalformedHeader(t *testing.T) {
 	m, _, _, _, _ := setupAuthEnv()
 
 	app := fiber.New(fiber.Config{
-		ErrorHandler: global.New(global.Deps{}).ErrorHandler(),
+		ErrorHandler: middleware.New(middleware.Deps{}).ErrorHandler(),
 	})
 	app.Get("/protected", m.Auth(), func(c fiber.Ctx) error {
 		return c.SendStatus(fiber.StatusOK)
@@ -193,7 +192,7 @@ func TestAuth_DefaultGuardSuccess(t *testing.T) {
 	require.NoError(t, err)
 
 	app := fiber.New(fiber.Config{
-		ErrorHandler: global.New(global.Deps{}).ErrorHandler(),
+		ErrorHandler: middleware.New(middleware.Deps{}).ErrorHandler(),
 	})
 
 	var capturedID authentication.Identity
@@ -205,24 +204,16 @@ func TestAuth_DefaultGuardSuccess(t *testing.T) {
 		return c.SendStatus(fiber.StatusOK)
 	})
 
-	// 验证标准单空格、连续多空格及制表符均可正确提取
-	headers := []string{
-		"Bearer " + sess.Token,
-		"Bearer   " + sess.Token,
-		"Bearer\t" + sess.Token,
-	}
+	// 验证标准 Bearer 令牌格式正确提取身份
+	capturedID = authentication.Identity{}
+	req := httptest.NewRequest(http.MethodGet, "/client/me", nil)
+	req.Header.Set("Authorization", "Bearer "+sess.Token)
+	resp, err := app.Test(req, fiber.TestConfig{Timeout: 0})
+	require.NoError(t, err)
 
-	for _, h := range headers {
-		capturedID = authentication.Identity{}
-		req := httptest.NewRequest(http.MethodGet, "/client/me", nil)
-		req.Header.Set("Authorization", h)
-		resp, err := app.Test(req, fiber.TestConfig{Timeout: 0})
-		require.NoError(t, err)
-
-		assert.Equal(t, fiber.StatusOK, resp.StatusCode)
-		assert.Equal(t, "usr_client_1", capturedID.UserID)
-		assert.Equal(t, string(models.RoleUser), capturedID.Role)
-	}
+	assert.Equal(t, fiber.StatusOK, resp.StatusCode)
+	assert.Equal(t, "usr_client_1", capturedID.UserID)
+	assert.Equal(t, string(models.RoleUser), capturedID.Role)
 }
 
 // TestAuth_NamedAdminGuard 验证指定 admin 守卫时的权限拦截与放行。
@@ -247,7 +238,7 @@ func TestAuth_NamedAdminGuard(t *testing.T) {
 	require.NoError(t, err)
 
 	app := fiber.New(fiber.Config{
-		ErrorHandler: global.New(global.Deps{}).ErrorHandler(),
+		ErrorHandler: middleware.New(middleware.Deps{}).ErrorHandler(),
 	})
 	app.Get("/admin/dashboard", m.Auth("admin"), func(c fiber.Ctx) error {
 		return c.SendStatus(fiber.StatusOK)
@@ -289,7 +280,7 @@ func TestAuth_RevocationEpoch(t *testing.T) {
 	require.NoError(t, err)
 
 	app := fiber.New(fiber.Config{
-		ErrorHandler: global.New(global.Deps{}).ErrorHandler(),
+		ErrorHandler: middleware.New(middleware.Deps{}).ErrorHandler(),
 	})
 	app.Get("/client/profile", m.Auth("client"), func(c fiber.Ctx) error {
 		return c.SendStatus(fiber.StatusOK)
@@ -320,8 +311,8 @@ func TestAuth_RevocationEpoch(t *testing.T) {
 	assert.Equal(t, string(errs.CodeAuthTokenRevoked), errResp.Code)
 }
 
-// TestAuth_FallbackWithoutAuthManager 验证未注入 AuthManager 时的向下兼容降级行为。
-func TestAuth_FallbackWithoutAuthManager(t *testing.T) {
+// TestAuth_WithoutAuthManager 验证未注入 AuthManager 时直接触发 fail-closed 500 错误。
+func TestAuth_WithoutAuthManager(t *testing.T) {
 	tokens := authentication.NewTokenIssuer(config.JWTConfig{
 		Secret:     "0123456789abcdef0123456789abcdef",
 		Issuer:     "bfiber-test",
@@ -338,7 +329,7 @@ func TestAuth_FallbackWithoutAuthManager(t *testing.T) {
 	require.NoError(t, err)
 
 	app := fiber.New(fiber.Config{
-		ErrorHandler: global.New(global.Deps{}).ErrorHandler(),
+		ErrorHandler: middleware.New(middleware.Deps{}).ErrorHandler(),
 	})
 	app.Get("/fallback", m.Auth(), func(c fiber.Ctx) error {
 		return c.SendStatus(fiber.StatusOK)
@@ -349,7 +340,7 @@ func TestAuth_FallbackWithoutAuthManager(t *testing.T) {
 	resp, err := app.Test(req, fiber.TestConfig{Timeout: 0})
 	require.NoError(t, err)
 
-	assert.Equal(t, fiber.StatusOK, resp.StatusCode)
+	assert.Equal(t, fiber.StatusInternalServerError, resp.StatusCode)
 }
 
 // TestAuth_NamedGuardWithoutAuthManager 验证未注入 AuthManager 时使用指定守卫触发 fail-closed 错误。
@@ -370,7 +361,7 @@ func TestAuth_NamedGuardWithoutAuthManager(t *testing.T) {
 	require.NoError(t, err)
 
 	app := fiber.New(fiber.Config{
-		ErrorHandler: global.New(global.Deps{}).ErrorHandler(),
+		ErrorHandler: middleware.New(middleware.Deps{}).ErrorHandler(),
 	})
 	app.Get("/admin/protected", m.Auth("admin"), func(c fiber.Ctx) error {
 		return c.SendStatus(fiber.StatusOK)
@@ -392,7 +383,7 @@ func TestAuth_NoTokensWithoutAuthManager(t *testing.T) {
 	})
 
 	app := fiber.New(fiber.Config{
-		ErrorHandler: global.New(global.Deps{}).ErrorHandler(),
+		ErrorHandler: middleware.New(middleware.Deps{}).ErrorHandler(),
 	})
 	app.Get("/protected", m.Auth(), func(c fiber.Ctx) error {
 		return c.SendStatus(fiber.StatusOK)
@@ -411,7 +402,7 @@ func TestCan_Unauthenticated(t *testing.T) {
 	m, _, _, _, _ := setupAuthEnv()
 
 	app := fiber.New(fiber.Config{
-		ErrorHandler: global.New(global.Deps{}).ErrorHandler(),
+		ErrorHandler: middleware.New(middleware.Deps{}).ErrorHandler(),
 	})
 	app.Get("/users", m.Can("users", "read"), func(c fiber.Ctx) error {
 		return c.SendStatus(fiber.StatusOK)
@@ -436,7 +427,7 @@ func TestCan_EnforcerNotConfigured(t *testing.T) {
 	})
 
 	app := fiber.New(fiber.Config{
-		ErrorHandler: global.New(global.Deps{}).ErrorHandler(),
+		ErrorHandler: middleware.New(middleware.Deps{}).ErrorHandler(),
 	})
 	app.Get("/users", func(c fiber.Ctx) error {
 		ctx := authentication.With(c.Context(), authentication.Identity{
@@ -461,7 +452,7 @@ func TestCan_RoleBasedAccess(t *testing.T) {
 	m, _, _, _, _ := setupAuthEnv()
 
 	app := fiber.New(fiber.Config{
-		ErrorHandler: global.New(global.Deps{}).ErrorHandler(),
+		ErrorHandler: middleware.New(middleware.Deps{}).ErrorHandler(),
 	})
 	app.Use(func(c fiber.Ctx) error {
 		if role := c.Get("X-Test-Role"); role != "" {
@@ -516,7 +507,7 @@ func TestAuth_MultiGuardFallback(t *testing.T) {
 	require.NoError(t, err)
 
 	app := fiber.New(fiber.Config{
-		ErrorHandler: global.New(global.Deps{}).ErrorHandler(),
+		ErrorHandler: middleware.New(middleware.Deps{}).ErrorHandler(),
 	})
 	// 声明优先匹配 admin 守卫，回退至 client 守卫
 	app.Get("/hybrid", m.Auth("admin", "client"), func(c fiber.Ctx) error {
@@ -546,7 +537,7 @@ func TestCan_Permission(t *testing.T) {
 	m, _, _, _, _ := setupAuthEnv()
 
 	app := fiber.New(fiber.Config{
-		ErrorHandler: global.New(global.Deps{}).ErrorHandler(),
+		ErrorHandler: middleware.New(middleware.Deps{}).ErrorHandler(),
 	})
 	app.Use(func(c fiber.Ctx) error {
 		if role := c.Get("X-Test-Role"); role != "" {
@@ -569,4 +560,182 @@ func TestCan_Permission(t *testing.T) {
 	require.NoError(t, err)
 
 	assert.Equal(t, fiber.StatusOK, resp.StatusCode)
+}
+
+// TestAuth_CookieExtractorSuccess 验证基于 Cookie access_token 链式提取令牌认证成功。
+func TestAuth_CookieExtractorSuccess(t *testing.T) {
+	m, _, clientGuard, _, repo := setupAuthEnv()
+
+	repo.users["usr_cookie_1"] = &models.User{
+		ID:     "usr_cookie_1",
+		Role:   models.RoleUser,
+		Status: models.StatusActive,
+		Name:   "Cookie User",
+	}
+
+	sess, err := clientGuard.Login(context.Background(), repo.users["usr_cookie_1"])
+	require.NoError(t, err)
+
+	app := fiber.New(fiber.Config{
+		ErrorHandler: middleware.New(middleware.Deps{}).ErrorHandler(),
+	})
+
+	var capturedID authentication.Identity
+	app.Get("/cookie/me", m.Auth(), func(c fiber.Ctx) error {
+		id, ok := authentication.FromContext(c.Context())
+		if ok {
+			capturedID = id
+		}
+		return c.SendStatus(fiber.StatusOK)
+	})
+
+	req := httptest.NewRequest(http.MethodGet, "/cookie/me", nil)
+	req.AddCookie(&http.Cookie{
+		Name:  "access_token",
+		Value: sess.Token,
+	})
+	resp, err := app.Test(req, fiber.TestConfig{Timeout: 0})
+	require.NoError(t, err)
+
+	assert.Equal(t, fiber.StatusOK, resp.StatusCode)
+	assert.Equal(t, "usr_cookie_1", capturedID.UserID)
+}
+
+// TestAuth_QueryExtractorSuccess 验证基于 Query token 链式提取令牌认证成功并正确注入 Provenance。
+func TestAuth_QueryExtractorSuccess(t *testing.T) {
+	m, _, clientGuard, _, repo := setupAuthEnv()
+
+	repo.users["usr_query_1"] = &models.User{
+		ID:     "usr_query_1",
+		Role:   models.RoleUser,
+		Status: models.StatusActive,
+		Name:   "Query User",
+	}
+
+	sess, err := clientGuard.Login(context.Background(), repo.users["usr_query_1"])
+	require.NoError(t, err)
+
+	app := fiber.New(fiber.Config{
+		ErrorHandler: middleware.New(middleware.Deps{}).ErrorHandler(),
+	})
+
+	var capturedID authentication.Identity
+	var capturedProv authentication.Provenance
+	var capturedOk bool
+	app.Get("/query/me", m.Auth(), func(c fiber.Ctx) error {
+		id, ok := authentication.FromContext(c.Context())
+		if ok {
+			capturedID = id
+		}
+		capturedProv, capturedOk = authentication.ProvenanceFromContext(c.Context())
+		return c.SendStatus(fiber.StatusOK)
+	})
+
+	req := httptest.NewRequest(http.MethodGet, "/query/me?token="+sess.Token, nil)
+	resp, err := app.Test(req, fiber.TestConfig{Timeout: 0})
+	require.NoError(t, err)
+
+	assert.Equal(t, fiber.StatusOK, resp.StatusCode)
+	assert.Equal(t, "usr_query_1", capturedID.UserID)
+	assert.True(t, capturedOk)
+	assert.Equal(t, extractors.SourceQuery, capturedProv)
+}
+
+// TestAuth_QueryExtractorMutatingMethodRejected 验证突变方法 (POST/PUT/PATCH/DELETE) 携带 Query Token 时被安全守卫拦截。
+func TestAuth_QueryExtractorMutatingMethodRejected(t *testing.T) {
+	m, _, clientGuard, _, repo := setupAuthEnv()
+
+	repo.users["usr_mutating_1"] = &models.User{
+		ID:     "usr_mutating_1",
+		Role:   models.RoleUser,
+		Status: models.StatusActive,
+	}
+
+	sess, err := clientGuard.Login(context.Background(), repo.users["usr_mutating_1"])
+	require.NoError(t, err)
+
+	app := fiber.New(fiber.Config{
+		ErrorHandler: middleware.New(middleware.Deps{}).ErrorHandler(),
+	})
+
+	handler := func(c fiber.Ctx) error {
+		return c.SendStatus(fiber.StatusOK)
+	}
+	app.Post("/mutating/action", m.Auth(), handler)
+	app.Put("/mutating/action", m.Auth(), handler)
+	app.Patch("/mutating/action", m.Auth(), handler)
+	app.Delete("/mutating/action", m.Auth(), handler)
+
+	mutatingMethods := []string{http.MethodPost, http.MethodPut, http.MethodPatch, http.MethodDelete}
+	for _, method := range mutatingMethods {
+		t.Run(method+" 携带 query token 被拒绝", func(t *testing.T) {
+			req := httptest.NewRequest(method, "/mutating/action?token="+sess.Token, nil)
+			resp, err := app.Test(req, fiber.TestConfig{Timeout: 0})
+			require.NoError(t, err)
+			assert.Equal(t, fiber.StatusUnauthorized, resp.StatusCode)
+
+			bodyBytes, err := io.ReadAll(resp.Body)
+			require.NoError(t, err)
+			var errResp errs.Response
+			require.NoError(t, json.Unmarshal(bodyBytes, &errResp))
+			assert.Equal(t, string(errs.CodeAuthTokenInvalid), errResp.Code)
+			assert.Contains(t, errResp.Message, "query token authentication is not permitted")
+		})
+	}
+
+	t.Run("POST 携带 Authorization Header 正常通过", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodPost, "/mutating/action", nil)
+		req.Header.Set("Authorization", "Bearer "+sess.Token)
+		resp, err := app.Test(req, fiber.TestConfig{Timeout: 0})
+		require.NoError(t, err)
+		assert.Equal(t, fiber.StatusOK, resp.StatusCode)
+	})
+}
+
+// TestAuth_ProvenanceTracking 验证 Header 与 Cookie 令牌提取时 Provenance 正确注入上下文。
+func TestAuth_ProvenanceTracking(t *testing.T) {
+	m, _, clientGuard, _, repo := setupAuthEnv()
+
+	repo.users["usr_prov_1"] = &models.User{
+		ID:     "usr_prov_1",
+		Role:   models.RoleUser,
+		Status: models.StatusActive,
+	}
+
+	sess, err := clientGuard.Login(context.Background(), repo.users["usr_prov_1"])
+	require.NoError(t, err)
+
+	app := fiber.New(fiber.Config{
+		ErrorHandler: middleware.New(middleware.Deps{}).ErrorHandler(),
+	})
+
+	var capturedProv authentication.Provenance
+	var capturedOk bool
+	app.Get("/prov/me", m.Auth(), func(c fiber.Ctx) error {
+		capturedProv, capturedOk = authentication.ProvenanceFromContext(c.Context())
+		return c.SendStatus(fiber.StatusOK)
+	})
+
+	t.Run("Authorization Header 来源", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodGet, "/prov/me", nil)
+		req.Header.Set("Authorization", "Bearer "+sess.Token)
+		resp, err := app.Test(req, fiber.TestConfig{Timeout: 0})
+		require.NoError(t, err)
+		assert.Equal(t, fiber.StatusOK, resp.StatusCode)
+		assert.True(t, capturedOk)
+		assert.Equal(t, extractors.SourceAuthHeader, capturedProv)
+	})
+
+	t.Run("Cookie 来源", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodGet, "/prov/me", nil)
+		req.AddCookie(&http.Cookie{
+			Name:  "access_token",
+			Value: sess.Token,
+		})
+		resp, err := app.Test(req, fiber.TestConfig{Timeout: 0})
+		require.NoError(t, err)
+		assert.Equal(t, fiber.StatusOK, resp.StatusCode)
+		assert.True(t, capturedOk)
+		assert.Equal(t, extractors.SourceCookie, capturedProv)
+	})
 }

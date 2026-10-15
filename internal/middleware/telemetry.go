@@ -1,4 +1,4 @@
-package global
+package middleware
 
 import (
 	"github.com/gofiber/contrib/v3/otel"

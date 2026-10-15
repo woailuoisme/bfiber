@@ -7,8 +7,27 @@ import (
 	"sync"
 	"time"
 
+	"github.com/gofiber/fiber/v3/extractors"
+
 	"bfiber/internal/platform/errs"
 )
+
+// Provenance 描述认证凭证提取的物理来源渠道（如 Header, Query, Cookie 等）。
+type Provenance = extractors.Source
+
+// provenanceCtxKey 是 context 中存储令牌来源渠道的私有键类型。
+type provenanceCtxKey struct{}
+
+// WithProvenance 将令牌来源渠道注入上下文。
+func WithProvenance(ctx context.Context, p Provenance) context.Context {
+	return context.WithValue(ctx, provenanceCtxKey{}, p)
+}
+
+// ProvenanceFromContext 从上下文中提取令牌来源渠道；若未注入则返回 false。
+func ProvenanceFromContext(ctx context.Context) (Provenance, bool) {
+	p, ok := ctx.Value(provenanceCtxKey{}).(Provenance)
+	return p, ok
+}
 
 // Identity 描述已认证请求的上下文身份凭据与会话元数据。
 type Identity struct {
@@ -146,4 +165,24 @@ func Authorize(ctx context.Context, resource, action string) error {
 		return errs.Forbidden("You are not allowed to perform this action")
 	}
 	return nil
+}
+
+// UserID 从请求上下文提取经过守卫认证的当前用户唯一标识。
+// 若未认证或缺少用户标识，则返回统一的 401 Unauthorized 业务错误。
+func UserID(ctx context.Context) (string, error) {
+	id, ok := FromContext(ctx)
+	if !ok || id.UserID == "" {
+		return "", errs.Unauthorized(errs.CodeAuthTokenInvalid, "Authentication is required")
+	}
+	return id.UserID, nil
+}
+
+// RequireIdentity 从请求上下文提取经过守卫认证的完整身份对象。
+// 若未认证则返回统一的 401 Unauthorized 业务错误。
+func RequireIdentity(ctx context.Context) (Identity, error) {
+	id, ok := FromContext(ctx)
+	if !ok || id.UserID == "" {
+		return Identity{}, errs.Unauthorized(errs.CodeAuthTokenInvalid, "Authentication is required")
+	}
+	return id, nil
 }

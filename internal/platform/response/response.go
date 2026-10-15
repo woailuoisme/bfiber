@@ -5,14 +5,11 @@
 package response
 
 import (
-	"cmp"
 	"fmt"
 	"io"
-	"net/url"
-	"strings"
+	"path/filepath"
 
 	"github.com/gofiber/fiber/v3"
-	"github.com/samber/lo"
 )
 
 // Meta 是传统偏移分页列表响应的元信息。
@@ -71,29 +68,13 @@ func Collection[T any](c fiber.Ctx, items []T) error {
 	return c.Status(fiber.StatusOK).JSON(items)
 }
 
-// Attachment 将已知长度的流作为下载附件写回客户端，设置标准 Content-Disposition 并处理 RFC 5987 文件名。
+// Attachment 将已知长度的流作为下载附件写回客户端，委托 Fiber v3 官方 Attachment 处理 RFC 6266 / RFC 8187 文件名。
 // 长度未知的流式产出（如边写边生成的报表）请直接设置响应头后写 c.Response().BodyWriter()。
 func Attachment(c fiber.Ctx, filename string, r io.Reader, size int64, contentType ...string) error {
-	return writeStream(c, dispositionAttachment, filename, r, size, contentType...)
-}
-
-// Inline 将已知长度的流作为内联展示（如 PDF/图片）写回客户端。
-func Inline(c fiber.Ctx, filename string, r io.Reader, size int64, contentType ...string) error {
-	return writeStream(c, dispositionInline, filename, r, size, contentType...)
-}
-
-// Content-Disposition 的两种处置方式。
-const (
-	dispositionAttachment = "attachment"
-	dispositionInline     = "inline"
-)
-
-// writeStream 统一设置 RFC 5987 文件名与内容类型后写出流，attachment / inline 仅处置方式不同。
-func writeStream(c fiber.Ctx, disposition, filename string, r io.Reader, size int64, contentType ...string) error {
-	ct := cmp.Or(lo.FirstOrEmpty(contentType), "application/octet-stream")
-	c.Set("Content-Disposition", fmt.Sprintf("%s; filename=%q; filename*=UTF-8''%s",
-		disposition, asciiFallbackFilename(filename), url.PathEscape(filename)))
-	c.Set("Content-Type", ct)
+	c.Attachment(filename)
+	if len(contentType) > 0 && contentType[0] != "" {
+		c.Type(contentType[0])
+	}
 	c.Status(fiber.StatusOK)
 	if size > 0 {
 		return c.SendStream(r, int(size))
@@ -101,17 +82,18 @@ func writeStream(c fiber.Ctx, disposition, filename string, r io.Reader, size in
 	return c.SendStream(r)
 }
 
-// asciiFallbackFilename 生成 Content-Disposition 的 ASCII 兜底名。
-//
-// filename 参数按 RFC 6266 只能承载 ASCII：非 ASCII 字符由 filename*= 用 UTF-8 承载。
-// 直接 %q 会把中文名转义成 "\u8d26\u5355.pdf"，这里统一替换为下划线保持可读。
-func asciiFallbackFilename(name string) string {
-	cleaned := strings.Map(func(r rune) rune {
-		if r < 0x20 || r > 0x7e || r == '"' || r == '\\' {
-			return '_'
-		}
-		return r
-	}, name)
-
-	return cmp.Or(strings.TrimSpace(cleaned), "download")
+// Inline 将已知长度的流作为内联展示（如 PDF/图片）写回客户端。
+func Inline(c fiber.Ctx, filename string, r io.Reader, size int64, contentType ...string) error {
+	fname := filepath.Base(filename)
+	c.Set(fiber.HeaderContentDisposition, fmt.Sprintf("inline; filename=%q", fname))
+	if len(contentType) > 0 && contentType[0] != "" {
+		c.Type(contentType[0])
+	} else {
+		c.Type(filepath.Ext(fname))
+	}
+	c.Status(fiber.StatusOK)
+	if size > 0 {
+		return c.SendStream(r, int(size))
+	}
+	return c.SendStream(r)
 }

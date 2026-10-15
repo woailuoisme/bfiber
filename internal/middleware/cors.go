@@ -1,10 +1,12 @@
-package global
+package middleware
 
 import (
 	"slices"
 
 	"github.com/gofiber/fiber/v3"
 	"github.com/gofiber/fiber/v3/middleware/cors"
+
+	"bfiber/internal/config"
 )
 
 var (
@@ -25,8 +27,13 @@ var (
 
 // CORS 【全局中间件】处理跨域预检与响应头配置。
 func (m *Middleware) CORS() fiber.Handler {
-	allowAll := slices.Contains(m.cors.AllowedOrigins, "*")
-	origins := m.cors.AllowedOrigins
+	return NewCORS(m.cors)
+}
+
+// NewCORS 构造独立的 CORS 跨域处理中间件。
+func NewCORS(cfg config.CORSConfig) fiber.Handler {
+	allowAll := slices.Contains(cfg.AllowedOrigins, "*")
+	origins := cfg.AllowedOrigins
 	if len(origins) == 0 {
 		origins = []string{"*"}
 		allowAll = true

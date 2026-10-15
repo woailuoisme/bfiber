@@ -11,8 +11,8 @@ func RegisterRoutes(router fiber.Router, handler *Handler, mw *middleware.Middle
 	group := router.Group("/realtime")
 
 	// 客户端连接凭据（需要客户端守卫身份认证，速率限制为 authenticated）
-	group.Get("/token", mw.Auth("client"), mw.Throttle(middleware.TierAuthenticated), handler.GetToken)
+	group.Get("/token", mw.Auth("client"), mw.Throttle(middleware.TierAuthenticated), handler.GetToken).Name("realtime.token")
 
 	// Centrifugo 反向代理鉴权端点（基于 HMAC-SHA256 签名校验，不套用用户层 IP 限流）。
-	group.Post("/proxy/subscribe", handler.ProxySubscribe)
+	group.Post("/proxy/subscribe", handler.ProxySubscribe).Name("realtime.proxy.subscribe")
 }

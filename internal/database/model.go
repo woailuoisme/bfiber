@@ -1,14 +1,12 @@
-// Package database 负责 PostgreSQL 连接池管理、事务工作单元、Base 实体基座与通用 Active Record 泛型仓储引擎。
+// Package database 负责 PostgreSQL 连接池管理、事务工作单元与 Base 实体基座。
 package database
 
 import (
-	"cmp"
 	"context"
 	"time"
 
 	"github.com/dromara/carbon/v2"
 	"github.com/google/uuid"
-	"github.com/samber/lo"
 	"github.com/uptrace/bun"
 )
 
@@ -174,36 +172,6 @@ func DeletedAtCarbon(m SoftDeletable) *carbon.Carbon {
 	return toCarbonPtr(m.GetDeletedAt())
 }
 
-// BeforeCreator 领域模型前置创建拦截契约。
-type BeforeCreator interface {
-	BeforeCreate(ctx context.Context) error
-}
-
-// AfterCreator 领域模型后置创建拦截契约。
-type AfterCreator interface {
-	AfterCreate(ctx context.Context) error
-}
-
-// BeforeUpdater 领域模型前置更新拦截契约。
-type BeforeUpdater interface {
-	BeforeUpdate(ctx context.Context) error
-}
-
-// AfterUpdater 领域模型后置更新拦截契约。
-type AfterUpdater interface {
-	AfterUpdate(ctx context.Context) error
-}
-
-// BeforeDeleter 领域模型前置删除拦截契约。
-type BeforeDeleter interface {
-	BeforeDelete(ctx context.Context) error
-}
-
-// AfterDeleter 领域模型后置删除拦截契约。
-type AfterDeleter interface {
-	AfterDelete(ctx context.Context) error
-}
-
 // ============================================================================
 // 3. 上下文数据库与事务感知 (Context-Aware DB Seam)
 // ============================================================================
@@ -231,24 +199,6 @@ func ResolveDB(ctx context.Context, fallback bun.IDB) bun.IDB {
 	return fallback
 }
 
-// ============================================================================
-// 4. 链式查询器与一体化仓储核心 (Query Builder & Core Lifecycle)
-// ============================================================================
-
-// ScopeFunc 声明可复用的查询作用域函数。
-type ScopeFunc[T any] func(*Query[T]) *Query[T]
-
-// Query 封装 bun.SelectQuery，兼具流式链式查询、作用域（Scopes）与仓储（Repository）增删改查全能力。
-type Query[T any] struct {
-	db                bun.IDB
-	baseDB            *bun.DB
-	sel               *bun.SelectQuery
-	withTrashed       bool
-	onlyTrashed       bool
-	chunkSize         int
-	hasExplicitSelect bool
-}
-
 // UnwrapBunDB 尝试从 bun.IDB 实例中提取底层的 *bun.DB 实例（支持直接断言与 BunDB/Unwrap 接口解包）。
 func UnwrapBunDB(idb bun.IDB) *bun.DB {
 	switch v := idb.(type) {
@@ -261,87 +211,4 @@ func UnwrapBunDB(idb bun.IDB) *bun.DB {
 	default:
 		return nil
 	}
-}
-
-// NewQuery 构造针对指定实体类型的泛型查询与仓储器。
-func NewQuery[T any](db bun.IDB) *Query[T] {
-	baseDB := UnwrapBunDB(db)
-	var sel *bun.SelectQuery
-	if db != nil {
-		sel = db.NewSelect().Model((*T)(nil))
-	}
-	return &Query[T]{
-		db:     db,
-		baseDB: baseDB,
-		sel:    sel,
-	}
-}
-
-// NewQueryFrom 根据上下文自动感知活跃事务或回退至 fallback 数据库构造查询器。
-func NewQueryFrom[T any](ctx context.Context, fallback bun.IDB) *Query[T] {
-	resolved := ResolveDB(ctx, fallback)
-	q := NewQuery[T](resolved)
-	if q.baseDB == nil {
-		q.baseDB = UnwrapBunDB(fallback)
-	}
-	return q
-}
-
-// RawQuery 返回底层的 *bun.SelectQuery，便于需要底层操作的高级场景。
-func (q *Query[T]) RawQuery() *bun.SelectQuery {
-	return q.sel
-}
-
-// Clone 返回当前 Query[T] 的深拷贝独立副本，杜绝多分支派生查询之间的状态交叉污染。
-func (q *Query[T]) Clone() *Query[T] {
-	return q.withSubSelect(q.sel.Clone())
-}
-
-// ToSQL 返回当前组装好的带占位符与参数绑定的标准 SQL 字符串表示，便于零副作用诊断。
-func (q *Query[T]) ToSQL() string {
-	return q.BuildSelect().String()
-}
-
-// Transaction 在当前数据库连接上启动事务并执行闭包，自动将活跃事务注入 Context 并处理提交与回滚。
-func (q *Query[T]) Transaction(ctx context.Context, fn func(txCtx context.Context) error) error {
-	if bdb := UnwrapBunDB(q.db); bdb != nil {
-		return bdb.RunInTx(ctx, nil, func(c context.Context, tx bun.Tx) error {
-			return fn(WithDB(c, tx))
-		})
-	}
-	if q.db != nil {
-		return fn(WithDB(ctx, q.db))
-	}
-	return fn(ctx)
-}
-
-// resolveDB 优先从 Context 提取活跃事务或连接，无活跃连接时回退至 q.db。
-func (q *Query[T]) resolveDB(ctx context.Context) bun.IDB {
-	return ResolveDB(ctx, q.db)
-}
-
-// defaultString 若首个参数非空则优先使用，否则返回默认值。
-func defaultString(fallback string, values []string) string {
-	return cmp.Or(lo.FirstOrEmpty(values), fallback)
-}
-
-// isModel 判断类型 T 是否实现了 Model 接口。
-func isModel[T any]() bool {
-	var zero T
-	_, ok := any(&zero).(Model)
-	return ok
-}
-
-// isSoftDeletable 判断类型 T 是否实现了 SoftDeletable 接口。
-func isSoftDeletable[T any]() bool {
-	var zero T
-	_, ok := any(&zero).(SoftDeletable)
-	return ok
-}
-
-// toIdents 将字符串切片转换为 bun.Ident 标识符切片。
-func toIdents(columns []string) []any {
-	return lo.Map(columns, func(col string, _ int) any {
-		return bun.Ident(col)
-	})
 }

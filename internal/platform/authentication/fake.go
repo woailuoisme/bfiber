@@ -158,8 +158,8 @@ func (f *FakeGuard) SetError(err error) *FakeGuard {
 	return f
 }
 
-// AuthenticateToken 模拟令牌认证。
-func (f *FakeGuard) AuthenticateToken(ctx context.Context, _ string) (context.Context, *Claims, error) {
+// AuthenticateClaims 模拟已解析声明认证。
+func (f *FakeGuard) AuthenticateClaims(ctx context.Context, _ *Claims) (context.Context, *Claims, error) {
 	f.mu.RLock()
 	defer f.mu.RUnlock()
 	if f.err != nil {

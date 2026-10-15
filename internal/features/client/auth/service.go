@@ -30,7 +30,6 @@ import (
 	"bfiber/internal/platform/notification/contract"
 	"bfiber/internal/platform/validator"
 	"bfiber/internal/shared/events"
-	shareduser "bfiber/internal/shared/user"
 )
 
 // NotificationSender 定义外发通知的高层抽象契约。
@@ -70,7 +69,7 @@ func NewService(deps Deps) *Service {
 	guard := deps.Guard
 	if guard == nil && deps.Tokens != nil && deps.DB != nil {
 		policy := platformauth.PolicyFunc[*models.User](func(ctx context.Context, u *models.User) error {
-			if err := shareduser.GuardState(u); err != nil {
+			if err := u.GuardState(); err != nil {
 				return err
 			}
 			if deps.Config != nil && deps.Config.Auth.RequireEmailVerification && !u.EmailVerified {
@@ -78,7 +77,7 @@ func NewService(deps Deps) *Service {
 			}
 			return nil
 		})
-		provider := shareduser.NewProvider(deps.DB, deps.Hasher)
+		provider := models.NewUserProvider(deps.DB, deps.Hasher)
 		guard = platformauth.NewGuard(deps.Tokens, provider, policy)
 	}
 	return &Service{
@@ -103,14 +102,14 @@ func (s *Service) idb(ctx context.Context) bun.IDB {
 }
 
 // SignUpEmail 注册邮箱密码账号，并按 Q15 的约定直接完成登录。
-func (s *Service) SignUpEmail(ctx context.Context, req SignUpEmailRequest) (SessionResponse, error) {
+func (s *Service) SignUpEmail(ctx context.Context, req SignUpEmailBody) (SessionResource, error) {
 	if err := validator.PasswordStrength("password", req.Password); err != nil {
-		return SessionResponse{}, err
+		return SessionResource{}, err
 	}
 
 	user := &models.User{
 		Name:   strings.TrimSpace(req.Name),
-		Email:  shareduser.NormaliseEmail(req.Email),
+		Email:  models.NormaliseEmail(req.Email),
 		Image:  req.Image,
 		Role:   models.RoleUser,
 		Status: models.StatusActive,
@@ -119,7 +118,7 @@ func (s *Service) SignUpEmail(ctx context.Context, req SignUpEmailRequest) (Sess
 
 	hash, err := s.hasher.Make(req.Password)
 	if err != nil {
-		return SessionResponse{}, errs.Internal(err)
+		return SessionResource{}, errs.Internal(err)
 	}
 
 	evt := &events.UserRegistered{
@@ -130,11 +129,11 @@ func (s *Service) SignUpEmail(ctx context.Context, req SignUpEmailRequest) (Sess
 	}
 	if err := s.db.RunInTx(ctx, nil, func(txCtx context.Context, tx bun.Tx) error {
 		if err := models.CreateUserWithCredential(txCtx, &tx, user, hash); err != nil {
-			return shareduser.MapUniqueConflict(err)
+			return models.MapUserUniqueConflict(err)
 		}
 		return nil
 	}); err != nil {
-		return SessionResponse{}, err
+		return SessionResource{}, err
 	}
 	if s.publisher != nil {
 		_ = s.publisher.Publish(ctx, evt)
@@ -142,7 +141,7 @@ func (s *Service) SignUpEmail(ctx context.Context, req SignUpEmailRequest) (Sess
 
 	session, err := s.issueSession(ctx, user)
 	if err != nil {
-		return SessionResponse{}, err
+		return SessionResource{}, err
 	}
 	s.recordLogin(ctx, user.ID, models.ProviderCredential)
 
@@ -150,25 +149,25 @@ func (s *Service) SignUpEmail(ctx context.Context, req SignUpEmailRequest) (Sess
 }
 
 // SignInEmail 邮箱密码登录。
-func (s *Service) SignInEmail(ctx context.Context, req SignInEmailRequest) (SessionResponse, error) {
+func (s *Service) SignInEmail(ctx context.Context, req SignInEmailBody) (SessionResource, error) {
 	user, err := models.FindUserByEmail(ctx, s.idb(ctx), req.Email)
 	if err != nil {
-		return SessionResponse{}, s.translateLookupFailure(ctx, err, req.Email)
+		return SessionResource{}, s.translateLookupFailure(ctx, err, req.Email)
 	}
 	return s.signInWithCredentials(ctx, user, req.Password)
 }
 
 // SignInUsername 用户名密码登录。
-func (s *Service) SignInUsername(ctx context.Context, req SignInUsernameRequest) (SessionResponse, error) {
+func (s *Service) SignInUsername(ctx context.Context, req SignInUsernameBody) (SessionResource, error) {
 	user, err := models.FindUserByUsername(ctx, s.idb(ctx), req.Username)
 	if err != nil {
-		return SessionResponse{}, s.translateLookupFailure(ctx, err, req.Username)
+		return SessionResource{}, s.translateLookupFailure(ctx, err, req.Username)
 	}
 	return s.signInWithCredentials(ctx, user, req.Password)
 }
 
 // SignOut 作废当前访问令牌；同时传入刷新令牌时一并作废，否则续签通道仍然敞开。
-func (s *Service) SignOut(ctx context.Context, req SignOutRequest) error {
+func (s *Service) SignOut(ctx context.Context, req SignOutBody) error {
 	if req.RefreshToken != nil {
 		return s.guard.Logout(ctx, *req.RefreshToken)
 	}
@@ -176,16 +175,16 @@ func (s *Service) SignOut(ctx context.Context, req SignOutRequest) error {
 }
 
 // GetSession 返回当前用户。纯只读、不续签，令牌过期即 401（Q13）。
-func (s *Service) GetSession(ctx context.Context, userID string) (GetSessionResponse, error) {
+func (s *Service) GetSession(ctx context.Context, userID string) (GetSessionResource, error) {
 	user, err := s.guard.UserOrFail(ctx)
 	if err != nil {
 		var loadErr error
 		user, loadErr = s.loadUser(ctx, userID)
 		if loadErr != nil {
-			return GetSessionResponse{}, loadErr
+			return GetSessionResource{}, loadErr
 		}
 	}
-	return GetSessionResponse{User: projectUser(user)}, nil
+	return GetSessionResource{User: projectUser(user)}, nil
 }
 
 // loadUser 兜底从数据库加载用户实体并进行状态校验。
@@ -204,20 +203,20 @@ func (s *Service) loadUser(ctx context.Context, userID string) (*models.User, er
 }
 
 // Refresh 用刷新令牌换取新的一对令牌，旧的刷新令牌立即失效（轮换）。
-func (s *Service) Refresh(ctx context.Context, req RefreshTokenRequest) (SessionResponse, error) {
+func (s *Service) Refresh(ctx context.Context, req RefreshTokenBody) (SessionResource, error) {
 	user, sess, err := s.guard.Refresh(ctx, req.RefreshToken)
 	if err != nil {
-		return SessionResponse{}, err
+		return SessionResource{}, err
 	}
 	if err := s.guardAccountState(user); err != nil {
-		return SessionResponse{}, err
+		return SessionResource{}, err
 	}
 
-	return toSessionResponse(sess, user), nil
+	return toSessionResource(sess, user), nil
 }
 
 // ChangePassword 校验当前口令后写入新口令。
-func (s *Service) ChangePassword(ctx context.Context, userID string, req ChangePasswordRequest) error {
+func (s *Service) ChangePassword(ctx context.Context, userID string, req ChangePasswordBody) error {
 	if err := validator.PasswordStrength("newPassword", req.NewPassword); err != nil {
 		return err
 	}
@@ -254,29 +253,29 @@ func (s *Service) ChangePassword(ctx context.Context, userID string, req ChangeP
 }
 
 // ForgetPassword 发送携带一次性令牌的重置链接。
-func (s *Service) ForgetPassword(ctx context.Context, language string, req ForgetPasswordRequest) (StatusResponse, error) {
+func (s *Service) ForgetPassword(ctx context.Context, language string, req ForgetPasswordBody) (StatusResource, error) {
 	return s.sendResetCredential(ctx, language, purposeResetLink, req.Email)
 }
 
 // RequestPasswordReset 发送 6 位重置验证码。
-func (s *Service) RequestPasswordReset(ctx context.Context, language string, req RequestPasswordResetRequest) (StatusResponse, error) {
+func (s *Service) RequestPasswordReset(ctx context.Context, language string, req RequestPasswordResetBody) (StatusResource, error) {
 	return s.sendResetCredential(ctx, language, purposeResetOTP, req.Email)
 }
 
 // ResetPassword 处理链接令牌与验证码两条互斥的重置路径。
-func (s *Service) ResetPassword(ctx context.Context, req ResetPasswordRequest) (StatusResponse, error) {
+func (s *Service) ResetPassword(ctx context.Context, req ResetPasswordBody) (StatusResource, error) {
 	if err := validator.PasswordStrength("newPassword", req.NewPassword); err != nil {
-		return StatusResponse{}, err
+		return StatusResource{}, err
 	}
 
 	user, err := s.resolveResetTarget(ctx, req)
 	if err != nil {
-		return StatusResponse{}, err
+		return StatusResource{}, err
 	}
 
 	hash, err := s.hasher.Make(req.NewPassword)
 	if err != nil {
-		return StatusResponse{}, errs.Internal(err)
+		return StatusResource{}, errs.Internal(err)
 	}
 
 	evt := &events.PasswordChanged{
@@ -292,7 +291,7 @@ func (s *Service) ResetPassword(ctx context.Context, req ResetPasswordRequest) (
 		}
 		return nil
 	}); err != nil {
-		return StatusResponse{}, err
+		return StatusResource{}, err
 	}
 	if s.publisher != nil {
 		_ = s.publisher.Publish(ctx, evt)
@@ -301,55 +300,55 @@ func (s *Service) ResetPassword(ctx context.Context, req ResetPasswordRequest) (
 	// 重置密码成功后作废该用户在此之前签发的所有会话令牌
 	_ = s.guard.InvalidateAll(ctx, user.ID)
 
-	return StatusResponse{Status: true}, nil
+	return StatusResource{Status: true}, nil
 }
 
 // SendVerificationOTP 发送邮箱验证码。
-func (s *Service) SendVerificationOTP(ctx context.Context, language string, req SendVerificationOTPRequest) (StatusResponse, error) {
+func (s *Service) SendVerificationOTP(ctx context.Context, language string, req SendVerificationOTPBody) (StatusResource, error) {
 	user, err := models.FindUserByEmail(ctx, s.idb(ctx), req.Email)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			// 静默成功：不向未认证调用方暴露邮箱是否已注册。
 			logger.FromContext(ctx).Info("verification requested for non-existent email, ignored")
-			return StatusResponse{Status: true}, nil
+			return StatusResource{Status: true}, nil
 		}
-		return StatusResponse{}, errs.Internal(err)
+		return StatusResource{}, errs.Internal(err)
 	}
 	if user.EmailVerified {
-		return StatusResponse{Status: true}, nil
+		return StatusResource{Status: true}, nil
 	}
 
 	ttl := s.cfg.Auth.OTPTTL
 	code, err := s.verifier.issueCode(ctx, purposeEmailVerify, user.Email, ttl)
 	if err != nil {
-		return StatusResponse{}, errs.Internal(err)
+		return StatusResource{}, errs.Internal(err)
 	}
 	notif := NewSignupVerificationNotification(user.Name, code)
 	notif.ExpiresIn = ttl
 	if err := s.notifyUser(ctx, language, user, notif, mailKeyVerifyEmail, code, ttl); err != nil {
-		return StatusResponse{}, errs.Internal(err)
+		return StatusResource{}, errs.Internal(err)
 	}
-	return StatusResponse{Status: true}, nil
+	return StatusResource{Status: true}, nil
 }
 
 // VerifyEmail 核销验证码并置位邮箱验证状态。
-func (s *Service) VerifyEmail(ctx context.Context, req VerifyEmailRequest) (StatusResponse, error) {
-	email := shareduser.NormaliseEmail(req.Email)
+func (s *Service) VerifyEmail(ctx context.Context, req VerifyEmailBody) (StatusResource, error) {
+	email := models.NormaliseEmail(req.Email)
 	if err := s.verifier.consume(ctx, purposeEmailVerify, email, strings.TrimSpace(req.OTP)); err != nil {
-		return StatusResponse{}, err
+		return StatusResource{}, err
 	}
 
 	user, err := models.FindUserByEmail(ctx, s.idb(ctx), email)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
-			return StatusResponse{}, errs.NotFound("No account is associated with this email address")
+			return StatusResource{}, errs.NotFound("No account is associated with this email address")
 		}
-		return StatusResponse{}, errs.Internal(err)
+		return StatusResource{}, errs.Internal(err)
 	}
 	if err := user.MarkEmailVerified(ctx, s.idb(ctx)); err != nil {
-		return StatusResponse{}, errs.Internal(err)
+		return StatusResource{}, errs.Internal(err)
 	}
-	return StatusResponse{Status: true}, nil
+	return StatusResource{Status: true}, nil
 }
 
 // 邮件模板键，与 lang/<语言>/mail.toml 中的键前缀一一对应。
@@ -360,50 +359,50 @@ const (
 )
 
 // signInWithCredentials 校验本地密码凭据并签发令牌。
-func (s *Service) signInWithCredentials(ctx context.Context, user *models.User, password string) (SessionResponse, error) {
+func (s *Service) signInWithCredentials(ctx context.Context, user *models.User, password string) (SessionResource, error) {
 	pwdHash, err := models.FindCredentialPassword(ctx, s.idb(ctx), user.ID)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
-			return SessionResponse{}, errs.InvalidCredentials()
+			return SessionResource{}, errs.InvalidCredentials()
 		}
-		return SessionResponse{}, errs.Internal(err)
+		return SessionResource{}, errs.Internal(err)
 	}
 	if pwdHash == nil || *pwdHash == "" {
-		return SessionResponse{}, errs.InvalidCredentials()
+		return SessionResource{}, errs.InvalidCredentials()
 	}
 
 	matched, err := s.hasher.Check(*pwdHash, password)
 	if err != nil {
-		return SessionResponse{}, errs.Internal(err)
+		return SessionResource{}, errs.Internal(err)
 	}
 	if !matched {
-		return SessionResponse{}, errs.InvalidCredentials()
+		return SessionResource{}, errs.InvalidCredentials()
 	}
 
 	session, err := s.issueSession(ctx, user)
 	if err != nil {
-		return SessionResponse{}, err
+		return SessionResource{}, err
 	}
 	s.recordLogin(ctx, user.ID, models.ProviderCredential)
 	return session, nil
 }
 
 // issueSession 校验账号状态后签发双令牌并组装响应体，不写库。
-func (s *Service) issueSession(ctx context.Context, user *models.User) (SessionResponse, error) {
+func (s *Service) issueSession(ctx context.Context, user *models.User) (SessionResource, error) {
 	if err := s.guardAccountState(user); err != nil {
-		return SessionResponse{}, err
+		return SessionResource{}, err
 	}
 
 	sess, err := s.guard.Login(ctx, user)
 	if err != nil {
-		return SessionResponse{}, err
+		return SessionResource{}, err
 	}
 
-	return toSessionResponse(sess, user), nil
+	return toSessionResource(sess, user), nil
 }
 
-func toSessionResponse(sess platformauth.Session, user *models.User) SessionResponse {
-	return SessionResponse{
+func toSessionResource(sess platformauth.Session, user *models.User) SessionResource {
+	return SessionResource{
 		Token:        sess.Token,
 		RefreshToken: sess.RefreshToken,
 		ExpiresIn:    sess.ExpiresIn,
@@ -413,7 +412,7 @@ func toSessionResponse(sess platformauth.Session, user *models.User) SessionResp
 
 // guardAccountState 拒绝封禁、未激活与（开启开关时）未验证邮箱的账号。
 func (s *Service) guardAccountState(user *models.User) error {
-	if err := shareduser.GuardState(user); err != nil {
+	if err := user.GuardState(); err != nil {
 		return err
 	}
 	if s.cfg.Auth.RequireEmailVerification && !user.EmailVerified {
@@ -460,26 +459,26 @@ func (s *Service) recordLogin(ctx context.Context, userID, method string) {
 }
 
 // sendResetCredential 签发重置凭据并投递邮件。邮箱不存在时静默返回成功。
-func (s *Service) sendResetCredential(ctx context.Context, language, purpose, email string) (StatusResponse, error) {
+func (s *Service) sendResetCredential(ctx context.Context, language, purpose, email string) (StatusResource, error) {
 	user, err := models.FindUserByEmail(ctx, s.idb(ctx), email)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			logger.FromContext(ctx).Info("password reset requested for non-existent email, ignored")
-			return StatusResponse{Status: true}, nil
+			return StatusResource{Status: true}, nil
 		}
-		return StatusResponse{}, errs.Internal(err)
+		return StatusResource{}, errs.Internal(err)
 	}
 
 	code, mailKey, ttl, err := s.issueResetCredential(ctx, purpose, user.Email)
 	if err != nil {
-		return StatusResponse{}, errs.Internal(err)
+		return StatusResource{}, errs.Internal(err)
 	}
 	notif := NewPasswordResetNotification(user.Name, code)
 	notif.ExpiresIn = ttl
 	if err := s.notifyUser(ctx, language, user, notif, mailKey, code, ttl); err != nil {
-		return StatusResponse{}, errs.Internal(err)
+		return StatusResource{}, errs.Internal(err)
 	}
-	return StatusResponse{Status: true}, nil
+	return StatusResource{Status: true}, nil
 }
 
 // issueResetCredential 按用途签发重置凭据，返回明文、邮件模板键与寿命。
@@ -500,8 +499,8 @@ func (s *Service) issueResetCredential(ctx context.Context, purpose, email strin
 }
 
 // resolveResetTarget 核销凭据并定位待重置的账号。
-func (s *Service) resolveResetTarget(ctx context.Context, req ResetPasswordRequest) (*models.User, error) {
-	email := shareduser.NormaliseEmail(req.Email)
+func (s *Service) resolveResetTarget(ctx context.Context, req ResetPasswordBody) (*models.User, error) {
+	email := models.NormaliseEmail(req.Email)
 
 	purpose, credential := purposeResetOTP, ""
 	switch {
@@ -554,7 +553,7 @@ func assignUsername(user *models.User, username *string) {
 	if username == nil {
 		return
 	}
-	normalised := shareduser.NormaliseUsername(*username)
+	normalised := models.NormaliseUsername(*username)
 	user.Username = &normalised
 	user.DisplayUsername = &normalised
 }

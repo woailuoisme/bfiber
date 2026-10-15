@@ -13,10 +13,10 @@ import (
 func RegisterAdminRoutes(router fiber.Router, handler *Handler, mw *middleware.Middleware) {
 	group := router.Group("/admin/users", mw.Auth("admin"), mw.Throttle(middleware.TierAuthenticated))
 
-	group.Get("", mw.Can(authorization.ResourceUsers, authorization.ActionList), handler.ListUsers)
-	group.Get("/export", mw.Can(authorization.ResourceUsers, authorization.ActionList), handler.ExportUsers)
-	group.Post("", mw.Can(authorization.ResourceUsers, authorization.ActionCreate), handler.CreateUser)
-	group.Get("/:id", mw.Can(authorization.ResourceUsers, authorization.ActionRead), handler.GetUser)
-	group.Patch("/:id", mw.Can(authorization.ResourceUsers, authorization.ActionUpdate), handler.UpdateUser)
-	group.Delete("/:id", mw.Can(authorization.ResourceUsers, authorization.ActionDelete), handler.DeleteUser)
+	group.Get("", mw.Can(authorization.ResourceUsers, authorization.ActionList), handler.ListUsers).Name("admin.users.list")
+	group.Get("/export", mw.Can(authorization.ResourceUsers, authorization.ActionList), handler.ExportUsers).Name("admin.users.export")
+	group.Post("", mw.Can(authorization.ResourceUsers, authorization.ActionCreate), handler.CreateUser).Name("admin.users.create")
+	group.Get("/:id", mw.Can(authorization.ResourceUsers, authorization.ActionRead), handler.GetUser).Name("admin.users.get")
+	group.Patch("/:id", mw.Can(authorization.ResourceUsers, authorization.ActionUpdate), handler.UpdateUser).Name("admin.users.update")
+	group.Delete("/:id", mw.Can(authorization.ResourceUsers, authorization.ActionDelete), handler.DeleteUser).Name("admin.users.delete")
 }

@@ -1,9 +1,8 @@
-package global
+package middleware
 
 import (
 	"cmp"
 	"errors"
-	"strings"
 
 	"github.com/gofiber/fiber/v3"
 
@@ -21,14 +20,24 @@ const defaultUploadBodyBytes = 32 << 20
 // multipart/form-data 上传按 UploadMaxBody（媒体配额）单独放行，
 // 否则 20MB 的媒体上传会被 1 MiB 的普通请求上限提前拦掉。
 func (m *Middleware) BodyLimit() fiber.Handler {
+	var maxBody, uploadMaxBody int64
+	if m != nil {
+		maxBody = m.maxBody
+		uploadMaxBody = m.uploadMaxBody
+	}
+	return NewBodyLimit(maxBody, uploadMaxBody)
+}
+
+// NewBodyLimit 构造独立的请求体限制中间件。
+func NewBodyLimit(maxBody, uploadMaxBody int64) fiber.Handler {
 	return func(c fiber.Ctx) error {
-		limit := cmp.Or(m.maxBody, maxBodyBytes)
-		if strings.HasPrefix(c.Get("Content-Type"), "multipart/form-data") {
-			limit = cmp.Or(m.uploadMaxBody, defaultUploadBodyBytes)
+		limit := cmp.Or(maxBody, maxBodyBytes)
+		if c.Is(fiber.MIMEMultipartForm) {
+			limit = cmp.Or(uploadMaxBody, defaultUploadBodyBytes)
 		}
 
 		contentLength := int64(c.Request().Header.ContentLength())
-		if contentLength > limit || int64(len(c.Body())) > limit {
+		if contentLength > limit {
 			return errs.RequestTooLarge(errors.New("http: request body too large"))
 		}
 

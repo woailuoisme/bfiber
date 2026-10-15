@@ -13,6 +13,7 @@ import (
 
 	"bfiber/internal/config"
 	"bfiber/internal/database"
+	"bfiber/internal/database/models"
 	adminauth "bfiber/internal/features/admin/auth"
 	admin "bfiber/internal/features/admin/user"
 	"bfiber/internal/features/client/auth"
@@ -21,13 +22,13 @@ import (
 	realtimeFeature "bfiber/internal/features/realtime"
 	"bfiber/internal/features/system"
 	"bfiber/internal/middleware"
-	"bfiber/internal/middleware/global"
 	platformauth "bfiber/internal/platform/authentication"
 	"bfiber/internal/platform/authorization"
 	"bfiber/internal/platform/cache"
 	"bfiber/internal/platform/eventbus"
 	"bfiber/internal/platform/hasher"
 	"bfiber/internal/platform/i18n"
+	"bfiber/internal/platform/influxdb"
 	"bfiber/internal/platform/logger"
 	"bfiber/internal/platform/mailer"
 	"bfiber/internal/platform/notification"
@@ -43,7 +44,6 @@ import (
 	"bfiber/internal/platform/wechat"
 	"bfiber/internal/shared/media"
 	sharedDatabase "bfiber/internal/shared/notification/database"
-	"bfiber/internal/shared/user"
 )
 
 // NewApplication 按依赖顺序完成装配：配置 → 日志 → 基础设施 → 领域 → HTTP。
@@ -106,7 +106,7 @@ func NewApplication(ctx context.Context, portOverride int) (*Application, error)
 	hasherClient := hasher.New()
 
 	// 初始化用户认证提供器与用户领域服务
-	userProvider := user.NewProvider(db, hasherClient)
+	userProvider := models.NewUserProvider(db, hasherClient)
 
 	realtimeGateway, notifier, err := initNotificationSubsystem(cfg, db, mailerClient, queueClient, td)
 	if err != nil {
@@ -114,34 +114,27 @@ func NewApplication(ctx context.Context, portOverride int) (*Application, error)
 	}
 
 	// 初始化客户端与管理端 Guard 及多守卫注册中心 (Multiple Guards)
-	clientGuard := platformauth.NewGuard(tokens, userProvider, user.ClientPolicy{})
-	adminGuard := platformauth.NewGuard(tokens, userProvider, user.AdminPolicy{})
+	clientGuard := platformauth.NewGuard(tokens, userProvider, models.ClientPolicy{})
+	adminGuard := platformauth.NewGuard(tokens, userProvider, models.AdminPolicy{})
 
 	authManager := platformauth.NewManager().
 		Register("client", clientGuard).
 		Register("admin", adminGuard).
 		SetDefault("client")
 
-	globalMW := global.New(global.Deps{
+	mw := middleware.New(middleware.Deps{
+		Tokens:         tokens,
+		AuthManager:    authManager,
 		Cache:          cacheClient,
+		Authz:          enforcer,
 		Logger:         log,
+		Limiter:        cfg.Limiter,
+		UploadMaxBody:  cfg.Media.MaxFileSize,
+		SigningKey:     cfg.JWT.Secret,
 		CORS:           cfg.CORS,
 		Production:     cfg.IsProduction(),
 		Translator:     translator,
 		RequestTimeout: cfg.App.Server.RequestTimeout,
-		// multipart 上传按媒体单文件配额放行；批量上传（UploadMultiple）受此单请求上限约束，
-		// ponytail: 单请求上限 == 单文件配额，需要一次传多个大文件时再加 MaxFiles 配置。
-		UploadMaxBody: cfg.Media.MaxFileSize,
-	})
-
-	routeMW := middleware.New(middleware.Deps{
-		Tokens:      tokens,
-		AuthManager: authManager,
-		Cache:       cacheClient,
-		Authz:       enforcer,
-		Logger:      log,
-		Limiter:     cfg.Limiter,
-		SigningKey:  cfg.JWT.Secret,
 	})
 
 	authService := auth.NewService(auth.Deps{
@@ -157,11 +150,9 @@ func NewApplication(ctx context.Context, portOverride int) (*Application, error)
 		Publisher:  eventBusManager,
 	})
 
-	userService := user.NewService(db)
 	adminService := admin.NewService(admin.Deps{
-		DB:          db,
-		UserService: userService,
-		Hasher:      hasherClient,
+		DB:     db,
+		Hasher: hasherClient,
 	})
 	adminAuthService := adminauth.NewService(adminauth.Deps{
 		DB:     db,
@@ -176,9 +167,16 @@ func NewApplication(ctx context.Context, portOverride int) (*Application, error)
 	}
 
 	mediaManager := media.New(cfg.Media, cfg.Storage, disk, db)
+	profileService := profile.NewService(db, mediaManager)
 
 	// 初始化 Temporal 工作流客户端与就绪探针适配器
 	temporalClient, temporalPinger, err := initTemporalSubsystem(cfg, log, td)
+	if err != nil {
+		return nil, td.fail(err)
+	}
+
+	// 初始化 InfluxDB 3 时序数据库客户端与就绪探针适配器
+	influxClient, influxPinger, err := initInfluxDBSubsystem(cfg, log, td)
 	if err != nil {
 		return nil, td.fail(err)
 	}
@@ -194,6 +192,7 @@ func NewApplication(ctx context.Context, portOverride int) (*Application, error)
 			Imgproxy: mediaManager.Image(),
 			Mailer:   mailerClient,
 			Temporal: temporalPinger,
+			InfluxDB: influxPinger,
 		}),
 		log,
 	)
@@ -219,9 +218,9 @@ func NewApplication(ctx context.Context, portOverride int) (*Application, error)
 	paymentHandler := paymentFeature.NewHandler(paymentService)
 
 	engine, err := buildEngine(
-		cfg, globalMW, routeMW, systemHandler,
+		cfg, mw, systemHandler,
 		auth.NewHandler(authService),
-		profile.NewHandler(userService, mediaManager),
+		profile.NewHandler(profileService),
 		admin.NewHandler(adminService),
 		adminauth.NewHandler(adminAuthService),
 		realtimeHandler,
@@ -236,7 +235,7 @@ func NewApplication(ctx context.Context, portOverride int) (*Application, error)
 		return nil, td.fail(err)
 	}
 
-	return &Application{
+	app := &Application{
 		cfg:          cfg,
 		logger:       log,
 		db:           db,
@@ -254,8 +253,29 @@ func NewApplication(ctx context.Context, portOverride int) (*Application, error)
 		eventbus:     eventBusManager,
 		queue:        queueClient,
 		temporal:     temporalClient,
+		influxdb:     influxClient,
 		engine:       engine,
-	}, nil
+	}
+
+	registerShutdownHooks(app)
+
+	return app, nil
+}
+
+func registerShutdownHooks(app *Application) {
+	app.engine.Hooks().OnPreShutdown(func() error {
+		app.logger.Info("Fiber engine initiating pre-shutdown, draining incoming requests")
+		return nil
+	})
+	app.engine.Hooks().OnPostShutdown(func(err error) error {
+		if err != nil {
+			app.logger.Warn("Fiber engine shutdown with error", zap.Error(err))
+		} else {
+			app.logger.Info("Fiber engine post-shutdown completed, closing external resources")
+		}
+		app.Close()
+		return nil
+	})
 }
 
 // 编译期断言满足探针接口。
@@ -264,6 +284,7 @@ var (
 	_ system.Pinger = (*cache.Client)(nil)
 	_ system.Pinger = (mailer.Mailer)(nil)
 	_ system.Pinger = (*temporal.Pinger)(nil)
+	_ system.Pinger = (*influxdb.Client)(nil)
 )
 
 // databasePinger 将 *bun.DB 适配为 system.Pinger。
@@ -437,4 +458,17 @@ func initNotificationSubsystem(
 	td.add(notifier.Close)
 
 	return realtimeGateway, notifier, nil
+}
+
+// initInfluxDBSubsystem 按需装配 InfluxDB 3 客户端与就绪探针适配器。
+func initInfluxDBSubsystem(cfg *config.Config, log *zap.Logger, td *teardown) (*influxdb.Client, system.Pinger, error) {
+	if !cfg.InfluxDB.Enabled {
+		return nil, nil, nil
+	}
+	influxClient, err := influxdb.NewClient(influxdb.FromAppConfig(cfg.InfluxDB), log)
+	if err != nil {
+		return nil, nil, err
+	}
+	td.add(influxClient.Close)
+	return influxClient, influxClient, nil
 }
