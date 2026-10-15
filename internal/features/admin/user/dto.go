@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/aarondl/opt/omitnull"
+	"github.com/uptrace/bun"
 
 	"bfiber/internal/database"
 	"bfiber/internal/database/models"
@@ -20,15 +21,6 @@ func init() {
 		omitnull.Val[Status]{},
 	)
 }
-
-// 分页默认值与上限，对应 api.md 6.1。
-const (
-	defaultPage     = 1
-	defaultPageSize = 20
-	maxPageSize     = 100
-	// maxPage 是页码硬上限，防止深度翻页引发性能退化。
-	maxPage = 1_000_000
-)
 
 // Role 是权限角色枚举的本地类型别名，规避 swag 跨包解析缺陷。
 type Role = enums.Role
@@ -88,6 +80,12 @@ type UpdateUserBody struct {
 	BanReason omitnull.Val[string] `json:"banReason" validate:"omitempty,max=500" swaggertype:"string" extensions:"x-nullable" example:"违规发布广告"`
 	// 封禁到期时间 (ISO 8601 UTC)
 	BanExpires omitnull.Val[time.Time] `json:"banExpires" swaggertype:"string" extensions:"x-nullable" example:"2026-10-01T00:00:00Z"`
+}
+
+// UpdateUserRequest 整合用户路径参数与局部更新载荷，供 Fiber v3 c.Bind().All() 单次原子绑定与单次验证。
+type UpdateUserRequest struct {
+	UserPathParams
+	UpdateUserBody
 }
 
 // Validate 实现 Validatable 契约，阻断库层非空字段的显式置空。
@@ -214,6 +212,36 @@ type ListUsersQueryParams struct {
 	Status Status `form:"status" json:"status" query:"status" example:"active" enums:"active,inactive,banned" validate:"omitempty,oneof=active inactive banned"`
 	// 按权限角色过滤 (user: 普通用户, admin: 系统管理员)
 	Role Role `form:"role" json:"role" query:"role" example:"user" enums:"user,admin" validate:"omitempty,oneof=user admin"`
+}
+
+// UserSorter 是后台用户列表排序解析器。
+var UserSorter = database.Sorter{
+	Allowed: models.UserSortColumns,
+	Default: "u.created_at DESC",
+}
+
+// Pagination 返回标准化分页结构体。
+func (r ListUsersQueryParams) Pagination() database.Pagination {
+	return database.Pagination{
+		Page:     r.Page,
+		PageSize: r.PageSize,
+	}
+}
+
+// Apply 将查询参数与过滤条件直接应用到 Bun 查询。
+func (r ListUsersQueryParams) Apply(q *bun.SelectQuery) *bun.SelectQuery {
+	if r.Status != "" {
+		q = q.Where("u.status = ?", r.Status)
+	}
+	if r.Role != "" {
+		q = q.Where("u.role = ?", r.Role)
+	}
+	if trimmed := strings.TrimSpace(r.Search); trimmed != "" {
+		pattern := "%" + database.EscapeLike(trimmed) + "%"
+		q = q.Where("(u.name ILIKE ? OR u.email ILIKE ? OR u.username ILIKE ?)", pattern, pattern, pattern)
+	}
+	q = UserSorter.Apply(q, r.Sort)
+	return r.Pagination().Apply(q)
 }
 
 // Validate 校验排序参数，要求每个逗号分隔的字段均在 models.UserSortColumns 白名单中。

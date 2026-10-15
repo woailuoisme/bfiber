@@ -102,12 +102,7 @@ func (h *Handler) SignInUsername(c fiber.Ctx) error {
 // @x-order      4
 // @Router       /auth/get-session [get]
 func (h *Handler) GetSession(c fiber.Ctx) error {
-	userID, err := authentication.UserID(c.Context())
-	if err != nil {
-		return err
-	}
-
-	session, err := h.service.GetSession(c.Context(), userID)
+	session, err := h.service.GetSession(c.Context(), authentication.CurrentUserID(c.Context()))
 	if err != nil {
 		return err
 	}
@@ -184,17 +179,12 @@ func (h *Handler) SignOut(c fiber.Ctx) error {
 // @x-order      9
 // @Router       /auth/change-password [post]
 func (h *Handler) ChangePassword(c fiber.Ctx) error {
-	userID, err := authentication.UserID(c.Context())
-	if err != nil {
-		return err
-	}
-
 	var body ChangePasswordBody
 	if err := c.Bind().Body(&body); err != nil {
 		return err
 	}
 
-	if err := h.service.ChangePassword(c.Context(), userID, body); err != nil {
+	if err := h.service.ChangePassword(c.Context(), authentication.CurrentUserID(c.Context()), body); err != nil {
 		return err
 	}
 	return response.NoContent(c)

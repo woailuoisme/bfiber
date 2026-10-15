@@ -167,6 +167,16 @@ func Authorize(ctx context.Context, resource, action string) error {
 	return nil
 }
 
+// CurrentUserID 从请求上下文快速获取已认证用户唯一标识，未认证或空时返回空字符串。
+// 适用于已由认证中间件（如 mw.Auth）前置保护的路由处理器。
+func CurrentUserID(ctx context.Context) string {
+	id, ok := FromContext(ctx)
+	if !ok {
+		return ""
+	}
+	return id.UserID
+}
+
 // UserID 从请求上下文提取经过守卫认证的当前用户唯一标识。
 // 若未认证或缺少用户标识，则返回统一的 401 Unauthorized 业务错误。
 func UserID(ctx context.Context) (string, error) {

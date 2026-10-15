@@ -25,13 +25,14 @@ type AppConfig struct {
 
 // HTTPServerConfig 描述 HTTP 传输层超时与缓冲区预算。
 type HTTPServerConfig struct {
-	ReadHeaderTimeout time.Duration `env:"HTTP_READ_HEADER_TIMEOUT" envDefault:"10s"`
+	ReadHeaderTimeout time.Duration `env:"HTTP_READ_HEADER_TIMEOUT" envDefault:"5s"`
 	ReadTimeout       time.Duration `env:"HTTP_READ_TIMEOUT" envDefault:"15s"`
-	WriteTimeout      time.Duration `env:"HTTP_WRITE_TIMEOUT" envDefault:"35s"`
+	WriteTimeout      time.Duration `env:"HTTP_WRITE_TIMEOUT" envDefault:"30s"`
 	IdleTimeout       time.Duration `env:"HTTP_IDLE_TIMEOUT" envDefault:"120s"`
-	ShutdownTimeout   time.Duration `env:"HTTP_SHUTDOWN_TIMEOUT" envDefault:"3s"`
-	MaxHeaderBytes    int           `env:"HTTP_MAX_HEADER_BYTES" envDefault:"1048576"`
-	RequestTimeout    time.Duration `env:"HTTP_REQUEST_TIMEOUT" envDefault:"15s"`
+	ShutdownTimeout   time.Duration `env:"HTTP_SHUTDOWN_TIMEOUT" envDefault:"15s"`
+	MaxHeaderBytes    int           `env:"HTTP_MAX_HEADER_BYTES" envDefault:"32768"`
+	RequestTimeout    time.Duration `env:"HTTP_REQUEST_TIMEOUT" envDefault:"10s"`
+	Prefork           bool          `env:"PREFORK" envDefault:"false"`
 }
 
 // Location 返回配置的时区 *time.Location，未设置或解析失败时回退至 time.UTC。

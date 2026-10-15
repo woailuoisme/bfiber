@@ -21,6 +21,8 @@ func TestRootCommand_Registration(t *testing.T) {
 	// 1. 验证全部一等公民命令（纯冒号命令体系 + serve）
 	expectedCommands := []string{
 		"serve",
+		"app:init",
+		"db:init",
 		"db:migrate",
 		"db:seed",
 		"db:fresh",
@@ -35,6 +37,7 @@ func TestRootCommand_Registration(t *testing.T) {
 		"scout:import",
 		"scout:flush",
 		"sentry:test",
+		"storage:init",
 		"temporal:work",
 	}
 
@@ -48,6 +51,7 @@ func TestRootCommand_Registration(t *testing.T) {
 
 	// 2. 验证空格层级父命令及已废除的 make:destroy 不再作为命令存在
 	deprecatedTopCommands := []string{
+		"app",
 		"queue",
 		"route",
 		"db",
@@ -56,6 +60,7 @@ func TestRootCommand_Registration(t *testing.T) {
 		"jwt",
 		"make",
 		"make:destroy",
+		"storage",
 	}
 	for _, deprecated := range deprecatedTopCommands {
 		assert.NotContains(t, commandNames, deprecated, "Deprecated command should not exist: "+deprecated)
@@ -65,13 +70,15 @@ func TestRootCommand_Registration(t *testing.T) {
 	groupIDs := lo.Map(cmd.Groups(), func(g *cobra.Group, _ int) string {
 		return g.ID
 	})
-	assert.ElementsMatch(t, []string{"db", "geoip", "jwt", "make", "queue", "route", "scout", "sentry", "temporal"}, groupIDs)
+	assert.ElementsMatch(t, []string{"app", "db", "geoip", "jwt", "make", "queue", "route", "scout", "sentry", "storage", "temporal"}, groupIDs)
 
 	cmdMap := lo.KeyBy(cmd.Commands(), func(c *cobra.Command) string {
 		return c.Name()
 	})
 
 	assert.Empty(t, cmdMap["serve"].GroupID, "serve should have no group (root Available commands)")
+	assert.Equal(t, "app", cmdMap["app:init"].GroupID)
+	assert.Equal(t, "db", cmdMap["db:init"].GroupID)
 	assert.Equal(t, "db", cmdMap["db:migrate"].GroupID)
 	assert.Equal(t, "db", cmdMap["db:seed"].GroupID)
 	assert.Equal(t, "db", cmdMap["db:fresh"].GroupID)
@@ -86,6 +93,7 @@ func TestRootCommand_Registration(t *testing.T) {
 	assert.Equal(t, "scout", cmdMap["scout:import"].GroupID)
 	assert.Equal(t, "scout", cmdMap["scout:flush"].GroupID)
 	assert.Equal(t, "sentry", cmdMap["sentry:test"].GroupID)
+	assert.Equal(t, "storage", cmdMap["storage:init"].GroupID)
 	assert.Equal(t, "temporal", cmdMap["temporal:work"].GroupID)
 }
 

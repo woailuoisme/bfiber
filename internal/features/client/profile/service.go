@@ -8,6 +8,7 @@ import (
 
 	"github.com/uptrace/bun"
 
+	"bfiber/internal/database"
 	"bfiber/internal/database/models"
 	"bfiber/internal/platform/errs"
 	"bfiber/internal/shared/media"
@@ -58,20 +59,27 @@ func (s *Service) UpdateProfile(ctx context.Context, userID string, body UpdateP
 	return toProfileResource(updated), nil
 }
 
-// UploadAvatar 上传新头像并原子更新用户档案中的头像链接。
+// UploadAvatar 上传新头像并原子更新用户档案中的头像链接（单事务自洽闭环）。
 func (s *Service) UploadAvatar(ctx context.Context, userID string, file *multipart.FileHeader) (ProfileResource, error) {
-	avatarURL, err := s.media.AttachAvatar(ctx, userID, file)
-	if err != nil {
-		return ProfileResource{}, err
-	}
+	var updated *models.User
+	err := database.RunInTx(ctx, s.db, func(txCtx context.Context) error {
+		avatarURL, err := s.media.AttachAvatar(txCtx, userID, file)
+		if err != nil {
+			return err
+		}
 
-	fields := map[string]any{"image": avatarURL}
-	updated, err := models.UpdateUserFields(ctx, s.db, userID, fields)
+		u, err := models.SetUserAvatar(txCtx, s.db, userID, avatarURL)
+		if err != nil {
+			return err
+		}
+		updated = u
+		return nil
+	})
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return ProfileResource{}, errs.NotFound("The requested user does not exist")
 		}
-		return ProfileResource{}, models.MapUserUniqueConflict(err)
+		return ProfileResource{}, err
 	}
 	return toProfileResource(updated), nil
 }

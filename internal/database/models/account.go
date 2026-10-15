@@ -82,10 +82,11 @@ func UpdatePassword(ctx context.Context, db bun.IDB, userID, passwordHash string
 	return nil
 }
 
-// CreateUserWithCredential 在同一事务内创建用户与其本地密码凭据。
+// CreateUserWithCredential 在同一事务内创建用户与其本地密码凭据（自动复用上下文活跃事务）。
 func CreateUserWithCredential(ctx context.Context, db bun.IDB, user *User, passwordHash string) error {
-	run := func(idb bun.IDB) error {
-		if _, err := idb.NewInsert().Model(user).Exec(ctx); err != nil {
+	return database.RunInTx(ctx, db, func(txCtx context.Context) error {
+		idb := database.ResolveDB(txCtx, db)
+		if _, err := idb.NewInsert().Model(user).Exec(txCtx); err != nil {
 			return err
 		}
 
@@ -95,22 +96,9 @@ func CreateUserWithCredential(ctx context.Context, db bun.IDB, user *User, passw
 			ProviderID: ProviderCredential,
 			Password:   &passwordHash,
 		}
-		_, err := idb.NewInsert().Model(account).Exec(ctx)
+		_, err := idb.NewInsert().Model(account).Exec(txCtx)
 		return err
-	}
-
-	switch tx := db.(type) {
-	case bun.Tx:
-		return run(tx)
-	case *bun.Tx:
-		return run(tx)
-	}
-	if bdb := database.UnwrapBunDB(db); bdb != nil {
-		return bdb.RunInTx(ctx, nil, func(_ context.Context, tx bun.Tx) error {
-			return run(tx)
-		})
-	}
-	return run(db)
+	})
 }
 
 // Insert 将账号记录插入数据库。

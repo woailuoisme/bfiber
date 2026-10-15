@@ -16,7 +16,7 @@ import (
 	"bfiber/internal/platform/cache"
 )
 
-func setupIdempotencyApp(store any, opts ...middleware.IdempotencyOption) *fiber.App {
+func setupIdempotencyApp(store fiber.Storage, opts ...middleware.IdempotencyOption) *fiber.App {
 	m := middleware.New(middleware.Deps{})
 	app := fiber.New(fiber.Config{
 		ErrorHandler: m.ErrorHandler(),

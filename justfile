@@ -121,6 +121,18 @@ migrate-diff name:
 migrate-hash:
     atlas migrate hash --dir file://migrations
 
+# 全栈应用环境一键初始化（JWT -> DB -> Garage S3 Bucket）
+init *ARGS:
+    go run ./cmd/api app:init {{ARGS}}
+
+# 仅初始化数据库（建库 + Atlas 迁移 + 初始播种）
+db-init *ARGS:
+    go run ./cmd/api db:init {{ARGS}}
+
+# 仅初始化对象存储系统（Garage S3 桶与公共读权限 / 本地目录）
+storage-init *ARGS:
+    go run ./cmd/api storage:init {{ARGS}}
+
 # 幂等注入首个管理员
 seed:
     go run ./cmd/api db:seed

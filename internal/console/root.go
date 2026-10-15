@@ -88,13 +88,15 @@ func NewRootCommandWithFactory(f Factory) *cobra.Command {
 	core.SetupColoredHelp(cmd)
 
 	// 注册以命名空间命名的业务命令分类组（Laravel Artisan 风格分组）
-	for _, id := range []string{"db", "geoip", "jwt", "make", "queue", "route", "scout", "sentry", "temporal"} {
+	for _, id := range []string{"app", "db", "geoip", "jwt", "make", "queue", "route", "scout", "sentry", "storage", "temporal"} {
 		cmd.AddGroup(&cobra.Group{ID: id, Title: id})
 	}
 
 	// 挂载纯冒号 Artisan 风格一等公民命令
 	commands := []*cobra.Command{
 		newServeCmd(f),
+		newAppInitCmd(f),
+		newDBInitCmd(f),
 		newDBMigrateCmd(f),
 		newDBSeedCmd(f),
 		newDBFreshCmd(f),
@@ -109,6 +111,7 @@ func NewRootCommandWithFactory(f Factory) *cobra.Command {
 		newScoutImportCmd(f),
 		newScoutFlushCmd(f),
 		newSentryTestCmd(f),
+		newStorageInitCmd(f),
 		newTemporalWorkCmd(f),
 	}
 

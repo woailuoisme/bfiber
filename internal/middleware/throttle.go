@@ -101,7 +101,7 @@ func (m *Middleware) resolveLimiterStorage() fiber.Storage {
 		return nil
 	}
 	if m.limiterStore != nil {
-		return cache.AsFiberStorage(m.limiterStore)
+		return m.limiterStore
 	}
 	if m.cache != nil {
 		return cache.AsFiberStorage(m.cache)
@@ -110,7 +110,7 @@ func (m *Middleware) resolveLimiterStorage() fiber.Storage {
 }
 
 // ThrottleWithStore 构造独立的平滑滑动窗口限流中间件实例，底层驱动采用 Fiber v3 limiter.SlidingWindow。
-func ThrottleWithStore(store any, limit int, window time.Duration, opts ...ThrottleOption) fiber.Handler {
+func ThrottleWithStore(storage fiber.Storage, limit int, window time.Duration, opts ...ThrottleOption) fiber.Handler {
 	var options throttleOptions
 	for _, opt := range opts {
 		opt(&options)
@@ -119,7 +119,6 @@ func ThrottleWithStore(store any, limit int, window time.Duration, opts ...Throt
 		window = rateLimitWindow
 	}
 
-	storage := cache.AsFiberStorage(store)
 	if storage == nil || limit <= 0 {
 		return func(c fiber.Ctx) error {
 			return c.Next()

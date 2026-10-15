@@ -1,19 +1,14 @@
 package models
 
 import (
-	"cmp"
 	"context"
 	"database/sql"
-	"errors"
-	"slices"
 	"strings"
 	"time"
 
-	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/uptrace/bun"
 
 	"bfiber/internal/database"
-	"bfiber/internal/platform/errs"
 	"bfiber/internal/shared/enums"
 )
 
@@ -52,14 +47,17 @@ type User struct {
 	BanReason           *string      `bun:"ban_reason"`
 	BanExpires          *time.Time   `bun:"ban_expires"`
 	LastLoginAt         *time.Time   `bun:"last_login_at"`
-	DeletedAt           *time.Time   `bun:"deleted_at"`
+	DeletedAt           *time.Time   `bun:"deleted_at,soft_delete"`
 
 	Accounts []*Account `bun:"rel:has-many,join:id=user_id"`
+	Media    []*Media   `bun:"rel:has-many,join:id=model_id"`
 }
 
 var (
 	_ database.Model         = (*User)(nil)
 	_ database.SoftDeletable = (*User)(nil)
+	_ bun.BeforeInsertHook   = (*User)(nil)
+	_ bun.BeforeUpdateHook   = (*User)(nil)
 )
 
 // GetDeletedAt 返回用户软删除时间指针（满足 SoftDeletable 契约）。
@@ -80,6 +78,19 @@ func (u *User) SetDeletedAt(t *time.Time) {
 	}
 }
 
+// AvatarMedia 返回用户关联的头像媒体资源，未设置或无头像时返回 nil。
+func (u *User) AvatarMedia() *Media {
+	if u == nil {
+		return nil
+	}
+	for _, m := range u.Media {
+		if m != nil && m.CollectionName == "avatar" {
+			return m
+		}
+	}
+	return nil
+}
+
 // IsBanned 判定账号是否处于封禁状态，已过期的封禁视为解除。
 func (u *User) IsBanned(now time.Time) bool {
 	if !u.Banned {
@@ -88,106 +99,36 @@ func (u *User) IsBanned(now time.Time) bool {
 	return u.BanExpires == nil || u.BanExpires.After(now)
 }
 
-// SearchableAs 返回 User 实体对应的搜索索引基础名称。
-func (u *User) SearchableAs() string {
-	return "users"
-}
-
-// SearchableKey 返回 User 实体的全局唯一搜索键。
-func (u *User) SearchableKey() string {
-	return u.ID
-}
-
-// ToSearchableArray 将用户模型映射为全文搜索文档字典。
-func (u *User) ToSearchableArray() map[string]any {
-	doc := map[string]any{
-		"id":             u.ID,
-		"name":           u.Name,
-		"email":          u.Email,
-		"role":           string(u.Role),
-		"status":         string(u.Status),
-		"email_verified": u.EmailVerified,
-		"created_at":     u.CreatedAt.Unix(),
-		"updated_at":     u.UpdatedAt.Unix(),
-	}
-	if u.Username != nil {
-		doc["username"] = *u.Username
-	}
-	if u.DisplayUsername != nil {
-		doc["display_username"] = *u.DisplayUsername
-	}
-	if u.PhoneNumber != nil {
-		doc["phone_number"] = *u.PhoneNumber
-	}
-	return doc
-}
-
-// GetModelType 返回多态媒体附件的模型类型标识。
-func (u *User) GetModelType() string {
-	return "user"
-}
-
-// GetModelID 返回多态媒体附件的宿主主键 ID。
-func (u *User) GetModelID() string {
-	return u.ID
-}
-
-// GetAuthIdentifier 返回认证主体唯一标识符（用户 ID）。
-func (u *User) GetAuthIdentifier() string {
+// ReconcileBanState 调和用户封禁状态不变量。
+func (u *User) ReconcileBanState() {
 	if u == nil {
-		return ""
+		return
 	}
-	return u.ID
-}
-
-// GetAuthRole 返回认证主体的权限角色。
-func (u *User) GetAuthRole() string {
-	if u == nil {
-		return ""
+	if u.Status == enums.StatusBanned {
+		u.Banned = true
 	}
-	return string(u.Role)
-}
-
-// HasVerifiedEmail 判断用户邮箱是否已通过验证。
-func (u *User) HasVerifiedEmail() bool {
-	if u == nil {
-		return false
-	}
-	return u.EmailVerified
-}
-
-// GetJWTCustomClaims 返回需要嵌入 JWT 载荷的自定义声明字典。
-func (u *User) GetJWTCustomClaims() map[string]any {
-	if u == nil {
-		return nil
-	}
-	return map[string]any{
-		"email_verified": u.EmailVerified,
-	}
-}
-
-// RouteNotificationFor 根据通知渠道返回接收目标标识（满足 contract.Notifiable 契约）。
-func (u *User) RouteNotificationFor(channel string) string {
-	if u == nil {
-		return ""
-	}
-	switch channel {
-	case "mail":
-		return u.Email
-	case "sms":
-		if u.PhoneNumber != nil {
-			return *u.PhoneNumber
+	if u.Banned {
+		u.Status = enums.StatusBanned
+		if u.BanReason == nil || *u.BanReason == "" {
+			reason := "Banned by administrator"
+			u.BanReason = &reason
 		}
+		return
 	}
-	return ""
+	u.BanReason = nil
+	u.BanExpires = nil
 }
 
-// RouteNotificationForMail 返回接收邮件通知的目标邮箱。
-func (u *User) RouteNotificationForMail() string {
-	if u == nil {
-		return ""
-	}
-	return u.Email
+// BeforeInsert 挂载 Bun 实体写入前钩子。
+func (u *User) BeforeInsert(_ context.Context, _ *bun.InsertQuery) error {
+	u.ReconcileBanState()
+	return nil
+}
+
+// BeforeUpdate 挂载 Bun 实体更新前钩子。
+func (u *User) BeforeUpdate(_ context.Context, _ *bun.UpdateQuery) error {
+	u.ReconcileBanState()
+	return nil
 }
 
 // UserListFilter 是用户列表查询的过滤条件。
@@ -210,45 +151,11 @@ var UserSortColumns = map[string]string{
 // NormaliseUserSort 把 API 的排序表达式翻译成白名单内的列与方向。
 // 缺省或全部非法时退回默认排序，保证分页顺序稳定。
 func NormaliseUserSort(raw string) []string {
-	raw = cmp.Or(strings.TrimSpace(raw), "-createdAt")
-
-	orders := make([]string, 0, 4)
-	for part := range strings.SplitSeq(raw, ",") {
-		part = strings.TrimSpace(part)
-		if part == "" {
-			continue
-		}
-		direction := "ASC"
-		if strings.HasPrefix(part, "-") {
-			direction = "DESC"
-			part = strings.TrimPrefix(part, "-")
-		}
-		col, ok := UserSortColumns[part]
-		if !ok {
-			continue
-		}
-		orders = append(orders, col+" "+direction)
+	sorter := database.Sorter{
+		Allowed: UserSortColumns,
+		Default: "u.created_at DESC",
 	}
-	if len(orders) == 0 {
-		return []string{"u.created_at DESC"}
-	}
-	return orders
-}
-
-// UserWritableColumns 是允许经 UpdateUserFields 写入的列白名单。
-var UserWritableColumns = map[string]bool{
-	"name":             true,
-	"image":            true,
-	"username":         true,
-	"display_username": true,
-	"phone_number":     true,
-	// 以下受控列仅管理端可写。
-	"role":           false,
-	"status":         false,
-	"banned":         false,
-	"ban_reason":     false,
-	"ban_expires":    false,
-	"email_verified": false,
+	return sorter.Parse(raw)
 }
 
 // ScopeNotDeleted 排除软删除记录作用域。
@@ -374,11 +281,9 @@ func ListUsers(ctx context.Context, db bun.IDB, filter UserListFilter, offset, l
 	users := make([]User, 0)
 	q := database.ResolveDB(ctx, db).NewSelect().
 		Model(&users).
-		Apply(ScopeNotDeleted).
-		Apply(func(sq *bun.SelectQuery) *bun.SelectQuery {
-			return ApplyUserFilter(sq, filter)
-		}).
-		Apply(ScopeSort(filter.Sort))
+		Apply(ScopeNotDeleted)
+	q = ApplyUserFilter(q, filter)
+	q = ApplyUserSort(q, filter.Sort)
 	if offset > 0 {
 		q = q.Offset(int64(offset))
 	}
@@ -404,11 +309,9 @@ func ListUsersAndCount(ctx context.Context, db bun.IDB, filter UserListFilter, p
 	users := make([]User, 0)
 	q := database.ResolveDB(ctx, db).NewSelect().
 		Model(&users).
-		Apply(ScopeNotDeleted).
-		Apply(func(sq *bun.SelectQuery) *bun.SelectQuery {
-			return ApplyUserFilter(sq, filter)
-		}).
-		Apply(ScopeSort(filter.Sort))
+		Apply(ScopeNotDeleted)
+	q = ApplyUserFilter(q, filter)
+	q = ApplyUserSort(q, filter.Sort)
 	total, err := q.Offset(int64((page - 1) * pageSize)).Limit(int64(pageSize)).ScanAndCount(ctx)
 	if err != nil {
 		return nil, 0, err
@@ -420,10 +323,8 @@ func ListUsersAndCount(ctx context.Context, db bun.IDB, filter UserListFilter, p
 func CountUsers(ctx context.Context, db bun.IDB, filter UserListFilter) (int, error) {
 	q := database.ResolveDB(ctx, db).NewSelect().
 		Model((*User)(nil)).
-		Apply(ScopeNotDeleted).
-		Apply(func(sq *bun.SelectQuery) *bun.SelectQuery {
-			return ApplyUserFilter(sq, filter)
-		})
+		Apply(ScopeNotDeleted)
+	q = ApplyUserFilter(q, filter)
 	cnt, err := q.Count(ctx)
 	return int(cnt), err
 }
@@ -440,81 +341,6 @@ func CountActiveUsers(ctx context.Context, db bun.IDB) (int, error) {
 func escapeLike(value string) string {
 	replacer := strings.NewReplacer(`\`, `\\`, `%`, `\%`, `_`, `\_`)
 	return replacer.Replace(value)
-}
-
-// ReconcileBanState 保证 banned 布尔值、status 账号状态与理由、过期时间相互协同一致。
-func ReconcileBanState(fields map[string]any) {
-	if statusVal, ok := fields["status"]; ok {
-		switch s := statusVal.(type) {
-		case string:
-			if s == string(enums.StatusBanned) {
-				fields["banned"] = true
-			}
-		case enums.UserStatus:
-			if s == enums.UserStatusBanned {
-				fields["banned"] = true
-			}
-		}
-	}
-
-	bannedVal, ok := fields["banned"]
-	if !ok {
-		return
-	}
-	banned, ok := bannedVal.(bool)
-	if !ok {
-		return
-	}
-	if banned {
-		fields["status"] = string(enums.StatusBanned)
-		if reason, has := fields["ban_reason"]; !has || reason == nil || reason == "" {
-			fields["ban_reason"] = "Banned by administrator"
-		}
-		return
-	}
-	fields["ban_reason"] = nil
-	fields["ban_expires"] = nil
-}
-
-// UpdateUserFields 按列名更新用户并返回最新实体。列名必须落在 UserWritableColumns 白名单内，否则直接报错。
-func UpdateUserFields(ctx context.Context, db bun.IDB, id string, fields map[string]any) (*User, error) {
-	if len(fields) == 0 {
-		return FindUserByID(ctx, db, id)
-	}
-
-	ReconcileBanState(fields)
-
-	cols := make([]string, 0, len(fields))
-	for column := range fields {
-		if _, ok := UserWritableColumns[column]; !ok {
-			return nil, errs.BadRequest("Disallowed user column for update: " + column)
-		}
-		cols = append(cols, column)
-	}
-	slices.Sort(cols)
-
-	query := database.ResolveDB(ctx, db).NewUpdate().
-		Model((*User)(nil)).
-		Where("id = ?", id).
-		Where("deleted_at IS NULL")
-	for _, column := range cols {
-		query = query.Set(column+" = ?", fields[column])
-	}
-	query = query.Set("updated_at = ?", time.Now().UTC())
-
-	result, err := query.Exec(ctx)
-	if err != nil {
-		return nil, err
-	}
-
-	affected, err := result.RowsAffected()
-	if err != nil {
-		return nil, err
-	}
-	if affected == 0 {
-		return nil, sql.ErrNoRows
-	}
-	return FindUserByID(ctx, db, id)
 }
 
 // Insert 将用户记录插入数据库。
@@ -535,13 +361,9 @@ func (u *User) Update(ctx context.Context, db bun.IDB, columns ...string) error 
 
 // Delete 删除用户记录（执行软删除）。
 func (u *User) Delete(ctx context.Context, db bun.IDB) error {
-	now := time.Now().UTC()
-	res, err := database.ResolveDB(ctx, db).NewUpdate().
-		Model((*User)(nil)).
-		Set("deleted_at = ?", now).
-		Set("updated_at = ?", now).
-		Where("id = ?", u.ID).
-		Where("deleted_at IS NULL").
+	res, err := database.ResolveDB(ctx, db).NewDelete().
+		Model(u).
+		WherePK().
 		Exec(ctx)
 	if err != nil {
 		return err
@@ -553,171 +375,12 @@ func (u *User) Delete(ctx context.Context, db bun.IDB) error {
 	if affected == 0 {
 		return sql.ErrNoRows
 	}
+	now := time.Now().UTC()
 	u.DeletedAt = &now
-	u.UpdatedAt = now
 	return nil
 }
 
 // SoftDelete 执行软删除（同 Delete）。
 func (u *User) SoftDelete(ctx context.Context, db bun.IDB) error {
 	return u.Delete(ctx, db)
-}
-
-// MarkEmailVerified 置位邮箱验证状态。
-func (u *User) MarkEmailVerified(ctx context.Context, db bun.IDB) error {
-	now := time.Now().UTC()
-	_, err := database.ResolveDB(ctx, db).NewUpdate().
-		Model((*User)(nil)).
-		Set("email_verified = ?", true).
-		Set("updated_at = ?", now).
-		Where("id = ?", u.ID).
-		Exec(ctx)
-	if err == nil {
-		u.EmailVerified = true
-		u.UpdatedAt = now
-	}
-	return err
-}
-
-// RecordLogin 按用户 ID 刷新最近登录时间与登录方式。
-func RecordLogin(ctx context.Context, db bun.IDB, userID, method string) error {
-	now := time.Now().UTC()
-	_, err := database.ResolveDB(ctx, db).NewUpdate().
-		Model((*User)(nil)).
-		Set("last_login_at = ?", now).
-		Set("last_login_method = ?", method).
-		Where("id = ?", userID).
-		Exec(ctx)
-	return err
-}
-
-// RecordLogin 刷新最近登录时间与登录方式。
-func (u *User) RecordLogin(ctx context.Context, db bun.IDB, method string) error {
-	now := time.Now().UTC()
-	_, err := database.ResolveDB(ctx, db).NewUpdate().
-		Model((*User)(nil)).
-		Set("last_login_at = ?", now).
-		Set("last_login_method = ?", method).
-		Where("id = ?", u.ID).
-		Exec(ctx)
-	if err == nil {
-		u.LastLoginAt = &now
-		u.LastLoginMethod = &method
-	}
-	return err
-}
-
-// Ban 封禁用户。
-func (u *User) Ban(ctx context.Context, db bun.IDB, reason string, expiresAt *time.Time) error {
-	now := time.Now().UTC()
-	q := database.ResolveDB(ctx, db).NewUpdate().
-		Model((*User)(nil)).
-		Set("banned = ?", true).
-		Set("status = ?", StatusBanned).
-		Set("ban_reason = ?", reason).
-		Set("ban_expires = ?", expiresAt).
-		Set("updated_at = ?", now).
-		Where("id = ?", u.ID)
-	_, err := q.Exec(ctx)
-	if err == nil {
-		u.Banned = true
-		u.Status = StatusBanned
-		u.BanReason = &reason
-		u.BanExpires = expiresAt
-		u.UpdatedAt = now
-	}
-	return err
-}
-
-// Unban 解封用户。
-func (u *User) Unban(ctx context.Context, db bun.IDB) error {
-	now := time.Now().UTC()
-	_, err := database.ResolveDB(ctx, db).NewUpdate().
-		Model((*User)(nil)).
-		Set("banned = ?", false).
-		Set("status = ?", StatusActive).
-		Set("ban_reason = NULL").
-		Set("ban_expires = NULL").
-		Set("updated_at = ?", now).
-		Where("id = ?", u.ID).
-		Exec(ctx)
-	if err == nil {
-		u.Banned = false
-		u.Status = StatusActive
-		u.BanReason = nil
-		u.BanExpires = nil
-		u.UpdatedAt = now
-	}
-	return err
-}
-
-// uniqueViolation 是 PostgreSQL 的唯一约束冲突错误码。
-const uniqueViolation = "23505"
-
-// 唯一索引名，用于把冲突翻译成具体业务错误码。
-const (
-	indexUserEmail       = "idx_user_email"
-	indexUserUsername    = "idx_user_username"
-	indexUserPhoneNumber = "idx_user_phone_number"
-)
-
-// NormaliseEmail 统一邮箱大小写与首尾空白，与库中 idx_user_email 的口径一致。
-func NormaliseEmail(email string) string {
-	return strings.ToLower(strings.TrimSpace(email))
-}
-
-// NormaliseUsername 统一用户名大小写与首尾空白，与库中 idx_user_username 的口径一致。
-func NormaliseUsername(username string) string {
-	return strings.ToLower(strings.TrimSpace(username))
-}
-
-// CheckUsernameAvailable 校验用户名是否已被其他用户占用。
-func CheckUsernameAvailable(ctx context.Context, db bun.IDB, userID string, username string) error {
-	normalised := NormaliseUsername(username)
-	existing, err := FindUserByUsername(ctx, db, normalised)
-	switch {
-	case err == nil && existing.ID != userID:
-		return errs.New(errs.CodeAuthUsernameTaken, "The username has already been taken")
-	case err != nil && !errors.Is(err, sql.ErrNoRows):
-		return errs.Internal(err)
-	}
-	return nil
-}
-
-// MapUserUniqueConflict 把唯一索引冲突翻译成具体的业务错误码。
-func MapUserUniqueConflict(err error) error {
-	pgErr, ok := errors.AsType[*pgconn.PgError](err)
-	if !ok || pgErr.Code != uniqueViolation {
-		return errs.Internal(err)
-	}
-
-	switch pgErr.ConstraintName {
-	case indexUserEmail:
-		return errs.New(errs.CodeAuthEmailAlreadyExists, "An account with this email address already exists")
-	case indexUserUsername:
-		return errs.New(errs.CodeAuthUsernameTaken, "The username has already been taken")
-	case indexUserPhoneNumber:
-		return errs.New(errs.CodeAuthPhoneNumberTaken, "The phone number has already been taken")
-	default:
-		return errs.Conflict("The user conflicts with an existing record")
-	}
-}
-
-// GuardState 校验用户的通用封禁与活跃状态。
-func (u *User) GuardState() error {
-	if u == nil {
-		return errs.Unauthorized(errs.CodeAuthTokenInvalid, "The token is invalid")
-	}
-	if u.IsBanned(time.Now().UTC()) || u.Status == StatusBanned {
-		return errs.New(errs.CodeAuthAccountBanned, "The account has been banned")
-	}
-	if u.Status != StatusActive {
-		return errs.Forbidden("The account is not active")
-	}
-	return nil
-}
-
-// GuardUserState 校验指定用户的封禁与活跃状态函数。
-func GuardUserState(user *User) error {
-	return user.GuardState()
 }

@@ -50,11 +50,17 @@ func buildEngine(
 	}
 
 	app := fiber.New(fiber.Config{
+		AppName:             cfg.App.Name,
+		ReadTimeout:         cfg.App.Server.ReadTimeout,
+		WriteTimeout:        cfg.App.Server.WriteTimeout,
+		IdleTimeout:         cfg.App.Server.IdleTimeout,
 		StructValidator:     validator.NewFiberValidator(),
 		ErrorHandler:        mw.ErrorHandler(),
 		BodyLimit:           bodyLimit,
 		PassLocalsToContext: true,
 	})
+
+	app.RegisterCustomConstraint(UserIDConstraint{})
 
 	// 全局中间件链：按洋葱模型分层编排（快速短路 -> 链路观测 -> 协议跨域 -> 传输优化 -> 异常治理 -> 幂等锁定）
 	// 注意：传输压缩（compress）与浏览器安全响应标头（helmet）推荐由前置网关（Caddy/Traefik）接管。

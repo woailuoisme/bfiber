@@ -33,6 +33,7 @@ func (a *Application) Serve(ctx context.Context) error {
 	go func() {
 		listenCfg := fiber.ListenConfig{
 			DisableStartupMessage: true,
+			EnablePrefork:         srvCfg.Prefork,
 		}
 		if err := a.engine.Listen(addr, listenCfg); err != nil && !errors.Is(err, http.ErrServerClosed) {
 			errCh <- fmt.Errorf("HTTP server exited unexpectedly: %w", err)

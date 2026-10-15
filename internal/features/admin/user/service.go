@@ -10,6 +10,7 @@ import (
 	"github.com/samber/lo"
 	"github.com/uptrace/bun"
 
+	"bfiber/internal/database"
 	"bfiber/internal/database/models"
 	"bfiber/internal/platform/errs"
 	"bfiber/internal/platform/excel"
@@ -45,8 +46,7 @@ func NewService(deps Deps) *Service {
 
 // ListUsers 返回分页用户列表，排序与过滤都走白名单。
 func (s *Service) ListUsers(ctx context.Context, query ListUsersQueryParams) ([]UserResource, response.Meta, error) {
-	page, pageSize := NormalisePagination(query.Page, query.PageSize)
-	users, total, err := models.ListUsersAndCount(ctx, s.db, query.ToFilter(), page, pageSize)
+	users, meta, err := database.Paginate[models.User](ctx, s.db, query)
 	if err != nil {
 		return nil, response.Meta{}, errs.Internal(err)
 	}
@@ -54,7 +54,7 @@ func (s *Service) ListUsers(ctx context.Context, query ListUsersQueryParams) ([]
 	items := lo.Map(users, func(entity models.User, _ int) UserResource {
 		return toUserResource(&entity)
 	})
-	return items, response.NewMeta(page, pageSize, total), nil
+	return items, meta, nil
 }
 
 // ExportUsers 流式导出匹配条件的所有用户数据至目标 io.Writer，采用物理分块拉取杜绝 OOM。
@@ -129,27 +129,24 @@ func (s *Service) UpdateUser(ctx context.Context, id string, body UpdateUserBody
 
 // DeleteUser 软删除指定用户。
 func (s *Service) DeleteUser(ctx context.Context, id string) error {
-	entity, err := models.FindUserByID(ctx, s.db, id)
+	res, err := database.ResolveDB(ctx, s.db).NewDelete().
+		Model((*models.User)(nil)).
+		Where("id = ?", id).
+		Exec(ctx)
 	if err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			return errs.NotFound("The requested user does not exist")
-		}
 		return errs.Internal(err)
 	}
-	if err := entity.Delete(ctx, s.db); err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			return errs.NotFound("The requested user does not exist")
-		}
+	affected, err := res.RowsAffected()
+	if err != nil {
 		return errs.Internal(err)
+	}
+	if affected == 0 {
+		return errs.NotFound("The requested user does not exist")
 	}
 	return nil
 }
 
 // NormalisePagination 将分页参数收敛到允许的安全区间。
 func NormalisePagination(page, pageSize int) (int, int) {
-	page = min(max(page, defaultPage), maxPage)
-	if pageSize < 1 {
-		pageSize = defaultPageSize
-	}
-	return page, min(pageSize, maxPageSize)
+	return (database.Pagination{Page: page, PageSize: pageSize}).Normalise()
 }

@@ -110,7 +110,7 @@ func (b *Base) BeforeAppendModel(_ context.Context, query bun.Query) error {
 
 // SoftDeletes 嵌入基座，为模型提供统一的软删除字段与便捷方法。
 type SoftDeletes struct {
-	DeletedAt *time.Time `bun:"deleted_at"`
+	DeletedAt *time.Time `bun:"deleted_at,soft_delete"`
 }
 
 // GetDeletedAt 返回软删除时间指针。
@@ -211,4 +211,21 @@ func UnwrapBunDB(idb bun.IDB) *bun.DB {
 	default:
 		return nil
 	}
+}
+
+// RunInTx 在事务闭包中执行业务逻辑，自动将活跃事务实例注入上下文 ctx 中。
+// 闭包内部调用的任何 Model、Repository 或 Service 只要传入 ctx，即可通过 database.ResolveDB(ctx, fallback)
+// 透明复用此事务，彻底杜绝显式多层穿透传递 &tx 的样板代码。
+// 若当前上下文已处于事务中，则直接复用当前事务，提供天然幂等安全的事务边界。
+func RunInTx(ctx context.Context, db bun.IDB, fn func(ctx context.Context) error) error {
+	if active := DBFromContext(ctx); active != nil {
+		return fn(ctx)
+	}
+	bunDB := UnwrapBunDB(db)
+	if bunDB == nil {
+		return fn(WithDB(ctx, db))
+	}
+	return bunDB.RunInTx(ctx, nil, func(txCtx context.Context, tx bun.Tx) error {
+		return fn(WithDB(txCtx, &tx))
+	})
 }

@@ -5,6 +5,7 @@ air = "latest"                                     # 热重载工具（API 与 W
 golangci-lint = "2"                                # 静态检查与统一代码格式化
 "go:golang.org/x/vuln/cmd/govulncheck" = "latest"  # 官方依赖漏洞安全扫描
 "go:golang.org/x/tools/gopls" = "latest"
+"go:github.com/gofiber/cli/fiber" = "latest"
 gotestsum = "latest"                               # 测试结果高亮与摘要增强
 swag = "1.16.6"                                    # 钉稳定版本保证 OpenAPI 文档契约一致
 

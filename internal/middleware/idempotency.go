@@ -57,17 +57,17 @@ func WithIdempotencyStorage(storage fiber.Storage) IdempotencyOption {
 
 // Idempotency 【全局中间件】基于 Fiber v3 官方内置 idempotency 中间件构建。
 func (m *Middleware) Idempotency(opts ...IdempotencyOption) fiber.Handler {
-	var store any
-	if m != nil {
-		store = m.cache
+	var storage fiber.Storage
+	if m != nil && m.cache != nil {
+		storage = cache.AsFiberStorage(m.cache)
 	}
-	return NewIdempotency(store, opts...)
+	return NewIdempotency(storage, opts...)
 }
 
 // NewIdempotency 构造独立的 Fiber 官方幂等中间件实例，自动对齐底层存储与回放指示头。
-func NewIdempotency(store any, opts ...IdempotencyOption) fiber.Handler {
+func NewIdempotency(storage fiber.Storage, opts ...IdempotencyOption) fiber.Handler {
 	cfg := idempotency.ConfigDefault
-	if storage := cache.AsFiberStorage(store); storage != nil {
+	if storage != nil {
 		cfg.Storage = storage
 	}
 
@@ -92,9 +92,9 @@ func NewIdempotency(store any, opts ...IdempotencyOption) fiber.Handler {
 	}
 }
 
-// IdempotencyWithStore 构造独立的 Fiber 官方幂等中间件实例（NewIdempotency 语义别名）。
-func IdempotencyWithStore(store any, opts ...IdempotencyOption) fiber.Handler {
-	return NewIdempotency(store, opts...)
+// IdempotencyWithStore 构造独立的 Fiber 官方幂等中间件实例。
+func IdempotencyWithStore(storage fiber.Storage, opts ...IdempotencyOption) fiber.Handler {
+	return NewIdempotency(storage, opts...)
 }
 
 // IdempotencyWithStorage 构造强类型官方 Storage 的幂等中间件实例。

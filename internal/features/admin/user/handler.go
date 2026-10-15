@@ -132,17 +132,12 @@ func (h *Handler) CreateUser(c fiber.Ctx) error {
 // @x-order      4
 // @Router       /admin/users/{id} [patch]
 func (h *Handler) UpdateUser(c fiber.Ctx) error {
-	var params UserPathParams
-	if err := c.Bind().URI(&params); err != nil {
+	var req UpdateUserRequest
+	if err := c.Bind().All(&req); err != nil {
 		return err
 	}
 
-	var body UpdateUserBody
-	if err := c.Bind().Body(&body); err != nil {
-		return err
-	}
-
-	updated, err := h.service.UpdateUser(c.Context(), params.ID, body)
+	updated, err := h.service.UpdateUser(c.Context(), req.ID, req.UpdateUserBody)
 	if err != nil {
 		return err
 	}

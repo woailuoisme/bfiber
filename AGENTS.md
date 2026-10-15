@@ -9,7 +9,7 @@
 `bfiber` 是一个基于现代化 Go 语言规范构建的企业级高并发 RESTful Web API 骨架。
 
 - **运行时与语言规范**：[Go 1.27+](file:///Users/seaside/Projects/backend/go/fiber-bun/go.mod) 现代标准，开启严格并发安全与类型安全。
-- **Web 引擎**：[Fiber v3](file:///Users/seaside/Projects/backend/go/fiber-bun/internal/bootstrap/engine.go) (`github.com/gofiber/fiber/v3`) + [Fiber Contrib](https://github.com/gofiber/contrib) (`github.com/gofiber/contrib/v3/sentry`)，统一错误恢复、链路追踪、CORS 与限流中间件。
+- **Web 引擎**：[Fiber v3](file:///Users/seaside/Projects/backend/go/fiber-bun/internal/bootstrap/engine.go) (`github.com/gofiber/fiber/v3`) + [Fiber Contrib](https://github.com/gofiber/contrib) (`github.com/gofiber/contrib/v3/sentry`)，统一错误恢复、链路追踪、CORS 与限流中间件（专责规范见 [fiber-v3 规范](file:///Users/seaside/Projects/backend/go/fiber-bun/.agents/rules/fiber-v3.md)）。
 - **数据库与 ORM**：[Bun ORM](file:///Users/seaside/Projects/backend/go/fiber-bun/internal/database/client.go) (`uptrace/bun`) + [pgx/v5 原生连接池](file:///Users/seaside/Projects/backend/go/fiber-bun/internal/database/client.go) (`jackc/pgx/v5`)，底层运行 PostgreSQL 18。
 - **数据库迁移 (Migrations)**：[Atlas CLI](file:///Users/seaside/Projects/backend/go/fiber-bun/atlas.hcl)，采用声明式 Schema 驱动的版本化 SQL 迁移。
 - **缓存体系**：[Valkey (Redis 兼容)](file:///Users/seaside/Projects/backend/go/fiber-bun/internal/platform/cache/cache.go) + 高性能驱动 (`redis/rueidis`)。
@@ -400,5 +400,8 @@ Agent 在面对特定专业任务时，必须结合以下位于 [.agents/rules/]
   - *核心禁令*：**绝对严禁 `cd` 改变目录**；优先使用 `rg`, `fd` 现代工具；所有命令前缀 `rtk` 降低 Token 消耗。
 - 🌐 **跨项目通用基础工程纪律** ➔ [general 规范](file:///Users/seaside/Projects/backend/go/fiber-bun/.agents/rules/general.md)
   - *核心准则*：默认简体中文交互；所有代码文件与符号引用强制使用可点击 Markdown 链接；提交记录遵循 Conventional Commits 规范。
-- 🧭 **Go 技能路由总规则** ➔ [golang-always 规则](file:///Users/seaside/Projects/backend/go/fiber-bun/.agents/rules/golang-always.mdc)
+- ⚡ **Fiber v3 引擎与 Web 传输层规范** ➔ [fiber-v3 规范](file:///Users/seaside/Projects/backend/go/fiber-bun/.agents/rules/fiber-v3.md)
+  - *触发条件*：编写、修改或审查 HTTP Handler、DTO、中间件、路由装配或 Fiber 引擎生命周期代码。
+  - *核心纪律*：严格遵循 Fasthttp 零拷贝与并发安全红线；统一采用 `c.Bind()` 四大 DTO 后缀；严禁在 Handler 中编写业务逻辑与直接操作 DB。
+- 🧭 **Go 技能路由总规则** ➔ [golang-always 规则](file:///Users/seaside/Projects/backend/go/fiber-bun/.agents/rules/golang-always.md)
   - *触发条件*：处理任何 `*.go`、`go.mod` 任务时自动应用，按意图并行加载 Primary 与 Secondary Go skills。

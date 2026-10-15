@@ -2,11 +2,15 @@ package console
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"net/url"
 	"os/exec"
 	"strings"
 	"time"
 
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/stdlib"
 	"github.com/spf13/cobra"
 	"github.com/uptrace/bun"
 
@@ -299,4 +303,188 @@ func runSeederWithProgress(ctx context.Context, streams *core.IOStreams, db *bun
 		subBar.Finish()
 	}
 	return err
+}
+
+// DefaultMaintenanceDB 为默认的 PostgreSQL 系统级维护数据库名称。
+const DefaultMaintenanceDB = "postgres"
+
+// DBInitOptions 封装 db:init 命令的参数与依赖容器 (SRP & DIP)。
+type DBInitOptions struct {
+	SkipMigrate   bool
+	SkipSeed      bool
+	MaintenanceDB string
+	Factory       Factory
+}
+
+// NewDBInitOptions 构造 DBInitOptions 实例。
+func NewDBInitOptions(f Factory) *DBInitOptions {
+	return &DBInitOptions{
+		MaintenanceDB: DefaultMaintenanceDB,
+		Factory:       f,
+	}
+}
+
+// Complete 从命令行上下文解析并补全配置。
+func (o *DBInitOptions) Complete(_ *cobra.Command, _ []string) error {
+	if strings.TrimSpace(o.MaintenanceDB) == "" {
+		o.MaintenanceDB = DefaultMaintenanceDB
+	}
+	return nil
+}
+
+// Validate 校验命令选项合法性。
+func (o *DBInitOptions) Validate() error {
+	if strings.TrimSpace(o.MaintenanceDB) == "" {
+		return &ValidationError{Field: "maintenance-db", Message: "cannot be empty"}
+	}
+	return nil
+}
+
+// Run 执行数据库创建、版本迁移与初始数据播种。
+func (o *DBInitOptions) Run(ctx context.Context) error {
+	cfg, err := o.Factory.Config()
+	if err != nil {
+		return fmt.Errorf("database: load config failed: %w", err)
+	}
+
+	streams := o.Factory.IOStreams()
+
+	parsedURL, targetDB, err := parseTargetDatabase(cfg.Database.URL)
+	if err != nil {
+		return err
+	}
+
+	core.TitleTo(streams.Out, fmt.Sprintf("Probing PostgreSQL target database [%s]...", targetDB))
+	if err := ensureDatabaseCreated(ctx, streams, parsedURL, targetDB, o.MaintenanceDB, cfg.Database.ConnectTimeout); err != nil {
+		return err
+	}
+
+	if !o.SkipMigrate {
+		core.TitleTo(streams.Out, "Applying database migrations via Atlas...")
+		if err := runAtlas(ctx, streams, "migrate", "apply", "--env", "app"); err != nil {
+			return err
+		}
+		core.SuccessTo(streams.Out, "✓ Database migrations applied successfully.")
+	} else {
+		core.InfoTo(streams.Out, "• Skipping database migrations (--skip-migrate).")
+	}
+
+	if !o.SkipSeed {
+		core.TitleTo(streams.Out, "Seeding initial data via DatabaseSeeder...")
+		db, err := o.Factory.DB(ctx)
+		if err != nil {
+			return fmt.Errorf("database: connect to target database failed: %w", err)
+		}
+		if err := runSeederWithProgress(ctx, streams, db, &seeders.DatabaseSeeder{}); err != nil {
+			return err
+		}
+		core.SuccessTo(streams.Out, "✓ Initial database seeding completed.")
+	} else {
+		core.InfoTo(streams.Out, "• Skipping initial database seeding (--skip-seed).")
+	}
+
+	core.SuccessTo(streams.Out, "Database initialization completed successfully.")
+	return nil
+}
+
+// parseTargetDatabase 从 DB_URL 中提取并校验目标数据库名称。
+func parseTargetDatabase(rawURL string) (*url.URL, string, error) {
+	cleanURL := strings.TrimSpace(rawURL)
+	if cleanURL == "" {
+		return nil, "", errors.New("database: DB_URL cannot be empty")
+	}
+
+	parsedURL, err := url.Parse(cleanURL)
+	if err != nil {
+		return nil, "", fmt.Errorf("database: parse DB_URL failed: %w", err)
+	}
+
+	targetDB := strings.TrimPrefix(parsedURL.Path, "/")
+	if targetDB == "" {
+		return nil, "", errors.New("database: target database name is empty in DB_URL")
+	}
+	return parsedURL, targetDB, nil
+}
+
+// ensureDatabaseCreated 连接维护数据库并确保目标数据库存在。
+func ensureDatabaseCreated(ctx context.Context, streams *core.IOStreams, parsedURL *url.URL, targetDB, maintenanceDB string, timeout time.Duration) error {
+	maintURL := *parsedURL
+	maintURL.Path = "/" + strings.TrimSpace(maintenanceDB)
+
+	maintPgxConfig, err := pgx.ParseConfig(maintURL.String())
+	if err != nil {
+		return fmt.Errorf("database: parse maintenance connection URL failed: %w", err)
+	}
+	maintPgxConfig.ConnectTimeout = timeout
+
+	maintSQLDB := stdlib.OpenDB(*maintPgxConfig)
+	defer func() { _ = maintSQLDB.Close() }()
+
+	if err := maintSQLDB.PingContext(ctx); err != nil {
+		return fmt.Errorf("database: connect to maintenance database [%s] failed: %w", maintenanceDB, err)
+	}
+
+	var exists bool
+	query := "SELECT EXISTS(SELECT 1 FROM pg_database WHERE datname = $1)"
+	if err := maintSQLDB.QueryRowContext(ctx, query, targetDB).Scan(&exists); err != nil {
+		return fmt.Errorf("database: check database existence failed: %w", err)
+	}
+
+	if exists {
+		core.InfoTo(streams.Out, "• Target database [%s] already exists.", targetDB)
+		return nil
+	}
+
+	core.InfoTo(streams.Out, "• Target database [%s] does not exist, creating...", targetDB)
+	if !isValidDBName(targetDB) {
+		return fmt.Errorf("database: invalid target database name %q", targetDB)
+	}
+	createSQL := fmt.Sprintf("CREATE DATABASE %q WITH ENCODING 'UTF8'", targetDB)
+	if _, err := maintSQLDB.ExecContext(ctx, createSQL); err != nil {
+		return fmt.Errorf("database: failed to create database [%s]: %w", targetDB, err)
+	}
+	core.SuccessTo(streams.Out, "✓ Target database [%s] created successfully.", targetDB)
+	return nil
+}
+
+// newDBInitCmd 构造 db:init 命令。
+func newDBInitCmd(f Factory) *cobra.Command {
+	opts := NewDBInitOptions(f)
+
+	cmd := &cobra.Command{
+		Use:   "db:init",
+		Short: "Initialize database (create PostgreSQL database, run Atlas migrations, and seed)",
+		Args:  cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if err := opts.Complete(cmd, args); err != nil {
+				return err
+			}
+			if err := opts.Validate(); err != nil {
+				return err
+			}
+			return opts.Run(cmd.Context())
+		},
+	}
+
+	cmd.Flags().BoolVar(&opts.SkipMigrate, "skip-migrate", false, "Skip applying Atlas migrations")
+	cmd.Flags().BoolVar(&opts.SkipSeed, "skip-seed", false, "Skip seeding initial data")
+	cmd.Flags().StringVar(&opts.MaintenanceDB, "maintenance-db", DefaultMaintenanceDB, "PostgreSQL maintenance database name for CREATE DATABASE")
+
+	return cmd
+}
+
+// isValidDBName 校验 PostgreSQL 数据库标识符名称安全，防止注入攻击。
+func isValidDBName(name string) bool {
+	if len(name) == 0 || len(name) > 63 {
+		return false
+	}
+	for i, r := range name {
+		if i == 0 && (r >= '0' && r <= '9') {
+			return false
+		}
+		if (r < 'a' || r > 'z') && (r < 'A' || r > 'Z') && (r < '0' || r > '9') && r != '_' {
+			return false
+		}
+	}
+	return true
 }

@@ -81,3 +81,25 @@ func TestListUsersQueryAcceptsCompoundSort(t *testing.T) {
 	assert.Equal(t, "-createdAt,email", query.Sort)
 	assert.Equal(t, []string{"u.created_at DESC", "u.email ASC"}, models.NormaliseUserSort(query.Sort))
 }
+
+// TestUpdateUserRequest 校验 UpdateUserRequest 对 UserPathParams 与 UpdateUserBody 的聚合契约。
+func TestUpdateUserRequest(t *testing.T) {
+	reqJSON := `{"name":"New Name","emailVerified":true}`
+	var req admin.UpdateUserRequest
+	require.NoError(t, json.Unmarshal([]byte(reqJSON), &req))
+	req.ID = "usr_01J9X4N8Y0ABCD"
+
+	assert.Equal(t, "usr_01J9X4N8Y0ABCD", req.ID)
+	require.NoError(t, req.Validate())
+
+	fields := req.ToFields()
+	assert.Equal(t, "New Name", fields["name"])
+	assert.Equal(t, true, fields["email_verified"])
+
+	// 显式传入 null 的非空字段应被 Validate 拒绝
+	nullReqJSON := `{"name":null}`
+	var invalidReq admin.UpdateUserRequest
+	require.NoError(t, json.Unmarshal([]byte(nullReqJSON), &invalidReq))
+	err := invalidReq.Validate()
+	require.Error(t, err)
+}

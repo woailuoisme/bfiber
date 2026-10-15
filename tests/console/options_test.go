@@ -328,3 +328,61 @@ func (p *testCustomPlan) Files() ([]core.PlannedFile, error) {
 func (p *testCustomPlan) CleanupDirs() []string {
 	return nil
 }
+
+// TestStorageInitOptions_Lifecycle 测试 StorageInitOptions 的参数校验与默认值逻辑。
+func TestStorageInitOptions_Lifecycle(t *testing.T) {
+	f := &console.TestFactory{}
+	opts := console.NewStorageInitOptions(f)
+
+	assert.True(t, opts.Public, "Public should be true by default")
+	assert.Empty(t, opts.Bucket, "Bucket should be empty by default (fallback to config)")
+
+	require.NoError(t, opts.Validate())
+	require.NoError(t, opts.Complete(nil, nil))
+}
+
+// TestDBInitOptions_Lifecycle 测试 DBInitOptions 的参数校验与默认值逻辑。
+func TestDBInitOptions_Lifecycle(t *testing.T) {
+	f := &console.TestFactory{}
+	opts := console.NewDBInitOptions(f)
+
+	assert.Equal(t, "postgres", opts.MaintenanceDB)
+	assert.False(t, opts.SkipMigrate)
+	assert.False(t, opts.SkipSeed)
+
+	require.NoError(t, opts.Validate())
+
+	opts.MaintenanceDB = ""
+	err := opts.Validate()
+	require.Error(t, err)
+	var valErr *console.ValidationError
+	require.ErrorAs(t, err, &valErr)
+	assert.Equal(t, "maintenance-db", valErr.Field)
+
+	require.NoError(t, opts.Complete(nil, nil))
+	assert.Equal(t, "postgres", opts.MaintenanceDB, "Complete should reset empty MaintenanceDB to default postgres")
+}
+
+// TestAppInitOptions_Lifecycle 测试 AppInitOptions 的参数校验与默认值逻辑。
+func TestAppInitOptions_Lifecycle(t *testing.T) {
+	f := &console.TestFactory{}
+	opts := console.NewAppInitOptions(f)
+
+	assert.True(t, opts.PublicStorage)
+	assert.Equal(t, "postgres", opts.MaintenanceDB)
+	assert.False(t, opts.SkipDB)
+	assert.False(t, opts.SkipStorage)
+	assert.False(t, opts.SkipJWT)
+
+	require.NoError(t, opts.Validate())
+
+	opts.MaintenanceDB = ""
+	err := opts.Validate()
+	require.Error(t, err)
+	var valErr *console.ValidationError
+	require.ErrorAs(t, err, &valErr)
+	assert.Equal(t, "maintenance-db", valErr.Field)
+
+	require.NoError(t, opts.Complete(nil, nil))
+	assert.Equal(t, "postgres", opts.MaintenanceDB)
+}

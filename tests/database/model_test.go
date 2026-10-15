@@ -243,6 +243,18 @@ func TestActiveRecord_ContextDB(t *testing.T) {
 		resolved := database.ResolveDB(scopedCtx, defaultDB)
 		assert.Equal(t, txDB, resolved)
 	})
+
+	t.Run("RunInTx with active transaction in context skips nested transaction", func(t *testing.T) {
+		scopedCtx := database.WithDB(ctx, txDB)
+		called := false
+		err := database.RunInTx(scopedCtx, defaultDB, func(innerCtx context.Context) error {
+			called = true
+			assert.Equal(t, txDB, database.DBFromContext(innerCtx))
+			return nil
+		})
+		require.NoError(t, err)
+		assert.True(t, called)
+	})
 }
 
 // TestNormaliseEmailAndUsername 验证邮箱与用户名的规格化处理。
@@ -366,5 +378,40 @@ func TestReconcileBanState(t *testing.T) {
 		models.ReconcileBanState(fields)
 		assert.Equal(t, false, fields["banned"])
 		assert.Equal(t, string(enums.StatusActive), fields["status"])
+	})
+}
+
+// TestUser_AvatarMedia 验证用户头像多态媒体关联提取逻辑。
+func TestUser_AvatarMedia(t *testing.T) {
+	t.Run("nil 用户返回 nil", func(t *testing.T) {
+		var u *models.User
+		assert.Nil(t, u.AvatarMedia())
+	})
+
+	t.Run("无媒体关联时返回 nil", func(t *testing.T) {
+		u := &models.User{}
+		assert.Nil(t, u.AvatarMedia())
+	})
+
+	t.Run("无 avatar 集合媒体时返回 nil", func(t *testing.T) {
+		u := &models.User{
+			Media: []*models.Media{
+				{ID: 1, CollectionName: "document"},
+				{ID: 2, CollectionName: "gallery"},
+			},
+		}
+		assert.Nil(t, u.AvatarMedia())
+	})
+
+	t.Run("存在 avatar 集合媒体时正确返回", func(t *testing.T) {
+		avatar := &models.Media{ID: 10, CollectionName: "avatar", FileName: "avatar.png"}
+		u := &models.User{
+			Media: []*models.Media{
+				{ID: 1, CollectionName: "document"},
+				avatar,
+				{ID: 2, CollectionName: "gallery"},
+			},
+		}
+		assert.Equal(t, avatar, u.AvatarMedia())
 	})
 }
