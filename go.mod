@@ -26,13 +26,13 @@ require (
 	github.com/go-pay/gopay v1.5.123
 	github.com/go-playground/validator/v10 v10.30.5
 	github.com/go-resty/resty/v2 v2.17.2
-	github.com/gofiber/contrib/v3/casbin/v2 v2.0.5
-	github.com/gofiber/contrib/v3/circuitbreaker v1.1.5
-	github.com/gofiber/contrib/v3/i18n v1.0.12
-	github.com/gofiber/contrib/v3/jwt v1.2.5
-	github.com/gofiber/contrib/v3/otel v1.3.0
-	github.com/gofiber/contrib/v3/sentry v1.1.12
-	github.com/gofiber/contrib/v3/zap v1.0.13
+	github.com/gofiber/contrib/v3/casbin/v2 v2.0.6
+	github.com/gofiber/contrib/v3/circuitbreaker v1.1.6
+	github.com/gofiber/contrib/v3/i18n v1.0.13
+	github.com/gofiber/contrib/v3/jwt v1.2.6
+	github.com/gofiber/contrib/v3/otel v1.3.1
+	github.com/gofiber/contrib/v3/sentry v1.1.13
+	github.com/gofiber/contrib/v3/zap v1.0.14
 	github.com/gofiber/fiber/v3 v3.6.1
 	github.com/gofiber/storage/memory/v2 v2.1.2
 	github.com/gofiber/storage/rueidis v1.5.2
