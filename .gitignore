@@ -145,7 +145,6 @@ helm/**/charts/*.tgz
 .antigravitycli/
 .specify/
 .agent/
-.agents/skills/
 specs/
 .code-review-graph/
 .codegraph/
