@@ -206,7 +206,7 @@ func TestIdempotency_RouteLevelWrapper(t *testing.T) {
 func TestIdempotency_WithStorageTypedConstructor(t *testing.T) {
 	storage := cache.NewMemoryStorage()
 	app := fiber.New()
-	app.Use(middleware.IdempotencyWithStorage(storage, middleware.WithIdempotencyLifetime(10*time.Minute)))
+	app.Use(middleware.NewIdempotency(storage, middleware.WithIdempotencyLifetime(10*time.Minute)))
 
 	callCount := 0
 	app.Post("/typed-storage", func(c fiber.Ctx) error {

@@ -166,11 +166,6 @@ func ThrottleWithStore(storage fiber.Storage, limit int, window time.Duration, o
 	return limiterHandler
 }
 
-// ThrottleWithStorage 构造强类型官方 Storage 的平滑滑动窗口限流中间件实例。
-func ThrottleWithStorage(storage fiber.Storage, limit int, window time.Duration, opts ...ThrottleOption) fiber.Handler {
-	return ThrottleWithStore(storage, limit, window, opts...)
-}
-
 // limitFor 按档位读取配额，未知档位回退至未认证配额。
 func (m *Middleware) limitFor(tier Tier) int {
 	if m != nil && !m.limiter.IsEnabled() {

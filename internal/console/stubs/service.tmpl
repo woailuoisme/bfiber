@@ -2,12 +2,11 @@ package {{ .PackageName }}
 
 import (
 	"context"
-	"database/sql"
-	"errors"
 
 	"github.com/samber/lo"
 	"github.com/uptrace/bun"
 
+	"bfiber/internal/database"
 	"bfiber/internal/platform/errs"
 	"bfiber/internal/platform/response"
 	"bfiber/internal/database/models"
@@ -32,13 +31,8 @@ func NewService(db bun.IDB) Service {
 }
 
 func (s *service) List(ctx context.Context, query List{{ .PascalName }}QueryParams) ([]{{ .PascalName }}Resource, response.Meta, error) {
-	total, err := models.Count{{ .PluralPascal }}(ctx, s.db, query.Search, query.Status)
-	if err != nil {
-		return nil, response.Meta{}, errs.Internal(err)
-	}
-
-	offset := (query.Page - 1) * query.PageSize
-	entities, err := models.List{{ .PluralPascal }}(ctx, s.db, query.Search, query.Status, offset, query.PageSize)
+	pagination := database.Pagination{Page: query.Page, PageSize: query.PageSize}
+	entities, total, err := models.List{{ .PluralPascal }}AndCount(ctx, s.db, query.Search, query.Status, pagination)
 	if err != nil {
 		return nil, response.Meta{}, errs.Internal(err)
 	}
@@ -47,17 +41,15 @@ func (s *service) List(ctx context.Context, query List{{ .PascalName }}QueryPara
 		return To{{ .PascalName }}Resource(&item)
 	})
 
-	meta := response.NewMeta(query.Page, query.PageSize, total)
-	return items, meta, nil
+	// 元信息按同一规格归一后的区间返回，避免越界参数在响应里原样透出。
+	page, pageSize := pagination.Normalise()
+	return items, response.NewMeta(page, pageSize, total), nil
 }
 
 func (s *service) GetByID(ctx context.Context, id string) (*{{ .PascalName }}Resource, error) {
 	entity, err := models.Find{{ .PascalName }}ByID(ctx, s.db, id)
 	if err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			return nil, errs.NotFound("{{ .KebabName }} not found")
-		}
-		return nil, errs.Internal(err)
+		return nil, errs.From(err, errs.NotFound("{{ .KebabName }} not found"))
 	}
 
 	res := To{{ .PascalName }}Resource(entity)
@@ -82,10 +74,7 @@ func (s *service) Create(ctx context.Context, req Create{{ .PascalName }}Body) (
 func (s *service) Update(ctx context.Context, id string, req Update{{ .PascalName }}Body) (*{{ .PascalName }}Resource, error) {
 	entity, err := models.Find{{ .PascalName }}ByID(ctx, s.db, id)
 	if err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			return nil, errs.NotFound("{{ .KebabName }} not found")
-		}
-		return nil, errs.Internal(err)
+		return nil, errs.From(err, errs.NotFound("{{ .KebabName }} not found"))
 	}
 
 	var changedColumns []string
@@ -115,17 +104,11 @@ func (s *service) Update(ctx context.Context, id string, req Update{{ .PascalNam
 func (s *service) Delete(ctx context.Context, id string) error {
 	entity, err := models.Find{{ .PascalName }}ByID(ctx, s.db, id)
 	if err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			return errs.NotFound("{{ .KebabName }} not found")
-		}
-		return errs.Internal(err)
+		return errs.From(err, errs.NotFound("{{ .KebabName }} not found"))
 	}
 
 	if err := entity.SoftDelete(ctx, s.db); err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			return errs.NotFound("{{ .KebabName }} not found")
-		}
-		return errs.Internal(err)
+		return errs.From(err, errs.NotFound("{{ .KebabName }} not found"))
 	}
 
 	return nil

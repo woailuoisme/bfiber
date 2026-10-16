@@ -27,12 +27,6 @@ func TestTelemetry_Disabled(t *testing.T) {
 	err = shutdown(context.Background())
 	require.NoError(t, err)
 
-	tr := telemetry.Tracer("test")
-	assert.NotNil(t, tr)
-
-	meter := telemetry.Meter("test")
-	assert.NotNil(t, meter)
-
 	core := telemetry.NewZapCore("bfiber", zapcore.InfoLevel)
 	assert.Nil(t, core)
 }

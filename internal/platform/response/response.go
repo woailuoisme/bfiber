@@ -5,10 +5,6 @@
 package response
 
 import (
-	"fmt"
-	"io"
-	"path/filepath"
-
 	"github.com/gofiber/fiber/v3"
 )
 
@@ -57,43 +53,4 @@ func Paginated[T any](c fiber.Ctx, items []T, meta Meta) error {
 		items = []T{}
 	}
 	return c.Status(fiber.StatusOK).JSON(Page[T]{Items: items, Meta: meta})
-}
-
-// Collection 返回无信封的数组集合，确保 nil 切片恒定序列化为 [] 而非 null。
-func Collection[T any](c fiber.Ctx, items []T) error {
-	// 为保持 RESTful JSON 契约一致性，将 nil 切片强制初始化为空切片 []T{}，避免在 JSON 序列化中产出 null。
-	if items == nil {
-		items = []T{}
-	}
-	return c.Status(fiber.StatusOK).JSON(items)
-}
-
-// Attachment 将已知长度的流作为下载附件写回客户端，委托 Fiber v3 官方 Attachment 处理 RFC 6266 / RFC 8187 文件名。
-// 长度未知的流式产出（如边写边生成的报表）请直接设置响应头后写 c.Response().BodyWriter()。
-func Attachment(c fiber.Ctx, filename string, r io.Reader, size int64, contentType ...string) error {
-	c.Attachment(filename)
-	if len(contentType) > 0 && contentType[0] != "" {
-		c.Type(contentType[0])
-	}
-	c.Status(fiber.StatusOK)
-	if size > 0 {
-		return c.SendStream(r, int(size))
-	}
-	return c.SendStream(r)
-}
-
-// Inline 将已知长度的流作为内联展示（如 PDF/图片）写回客户端。
-func Inline(c fiber.Ctx, filename string, r io.Reader, size int64, contentType ...string) error {
-	fname := filepath.Base(filename)
-	c.Set(fiber.HeaderContentDisposition, fmt.Sprintf("inline; filename=%q", fname))
-	if len(contentType) > 0 && contentType[0] != "" {
-		c.Type(contentType[0])
-	} else {
-		c.Type(filepath.Ext(fname))
-	}
-	c.Status(fiber.StatusOK)
-	if size > 0 {
-		return c.SendStream(r, int(size))
-	}
-	return c.SendStream(r)
 }

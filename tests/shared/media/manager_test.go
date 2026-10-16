@@ -15,7 +15,6 @@ import (
 )
 
 func TestManager_ContractsAndURLDerivation(t *testing.T) {
-	ctx := t.Context()
 	rootDir := t.TempDir()
 	baseURL := "https://cdn.example.com/uploads"
 
@@ -61,36 +60,14 @@ func TestManager_ContractsAndURLDerivation(t *testing.T) {
 		originalURL := mgr.URL(item)
 		assert.Equal(t, "https://cdn.example.com/uploads/avatars/2026/09/28/sample.png", originalURL)
 
-		// 2. 缩略图通过 imgproxy 签名生成
-		thumbURL := mgr.Thumbnail(item, 150, 150)
-		assert.True(t, strings.HasPrefix(thumbURL, "https://img.example.com/insecure/"))
-		assert.Contains(t, thumbURL, "/rs:fill:150:150:")
-
-		// 3. 头像通过 imgproxy 生成带重心定位的 URL
+		// 2. 头像通过 imgproxy 生成带重心定位的 URL
 		avatarURL := mgr.Avatar(item, 80)
 		assert.True(t, strings.HasPrefix(avatarURL, "https://img.example.com/insecure/"))
 		assert.Contains(t, avatarURL, "/rs:fill:80:80:")
 		assert.Contains(t, avatarURL, "/g:fp:")
 
-		// 4. 空模型保护
+		// 3. 空模型保护
 		assert.Empty(t, mgr.URL(nil))
-		assert.Empty(t, mgr.Thumbnail(nil, 100, 100))
 		assert.Empty(t, mgr.Avatar(nil, 100))
-	})
-
-	t.Run("数据库未就绪时执行 CRUD 产生明确错误", func(t *testing.T) {
-		_, err := mgr.FindByUUID(ctx, "01923456-789a-7b3c-8d4e-5f6a7b8c9d0e")
-		require.Error(t, err)
-		assert.Contains(t, err.Error(), "database connection is not available")
-
-		_, err = mgr.FindByID(ctx, 1)
-		require.Error(t, err)
-		assert.Contains(t, err.Error(), "database connection is not available")
-
-		err = mgr.Delete(ctx, "01923456-789a-7b3c-8d4e-5f6a7b8c9d0e")
-		require.Error(t, err)
-
-		_, err = mgr.Get(ctx, media.GenericAttachable{ModelType: "user", ModelID: "1"})
-		require.Error(t, err)
 	})
 }

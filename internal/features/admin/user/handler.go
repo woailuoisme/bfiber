@@ -76,7 +76,7 @@ func (h *Handler) ExportUsers(c fiber.Ctx) error {
 // @Accept       json
 // @Produce      json
 // @Security     BearerAuth
-// @Param        id path string true "用户唯一标识" example("usr_01J9X4N8Y0ABCD")
+// @Param        id path string true "用户唯一标识" example("019572d4-a6c8-78b1-8cf0-281b94c032a1")
 // @Success      200 {object} UserResource "用户完整档案"
 // @x-order      2
 // @Router       /admin/users/{id} [get]
@@ -126,7 +126,7 @@ func (h *Handler) CreateUser(c fiber.Ctx) error {
 // @Accept       json
 // @Produce      json
 // @Security     BearerAuth
-// @Param        id path string true "用户唯一标识" example("usr_01J9X4N8Y0ABCD")
+// @Param        id path string true "用户唯一标识" example("019572d4-a6c8-78b1-8cf0-281b94c032a1")
 // @Param        payload body UpdateUserBody true "局部更新载荷"
 // @Success      200 {object} UserResource "更新后的用户对象"
 // @x-order      4
@@ -147,12 +147,12 @@ func (h *Handler) UpdateUser(c fiber.Ctx) error {
 // DeleteUser 处理 DELETE /v1/admin/users/:id，返回 204。
 //
 // @Summary      注销删除用户
-// @Description  物理删除指定用户及其关联账号数据，并级联清理权限策略。
+// @Description  软删除指定用户：仅写入删除时间并保留记录，账号数据与权限策略不做级联清理；被删用户不再出现在业务查询中，其邮箱可被重新注册。
 // @Tags         用户管理
 // @Accept       json
 // @Produce      json
 // @Security     BearerAuth
-// @Param        id path string true "用户唯一标识" example("usr_01J9X4N8Y0ABCD")
+// @Param        id path string true "用户唯一标识" example("019572d4-a6c8-78b1-8cf0-281b94c032a1")
 // @Success      204 "删除成功，无响应体"
 // @x-order      5
 // @Router       /admin/users/{id} [delete]

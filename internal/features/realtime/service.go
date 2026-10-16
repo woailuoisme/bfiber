@@ -3,9 +3,7 @@ package realtime
 import (
 	"cmp"
 	"context"
-	"database/sql"
 	"encoding/json"
-	"errors"
 	"time"
 
 	"github.com/uptrace/bun"
@@ -61,10 +59,7 @@ func (s *Service) IssueToken(ctx context.Context, userID, role string) (*TokenRe
 	if s.db != nil {
 		entity, err := models.FindUserByID(ctx, s.db, userID)
 		if err != nil {
-			if errors.Is(err, sql.ErrNoRows) {
-				return nil, errs.NotFound("The requested user does not exist")
-			}
-			return nil, errs.Internal(err)
+			return nil, errs.From(err, errs.UserNotFound())
 		}
 		role = string(entity.Role)
 	}

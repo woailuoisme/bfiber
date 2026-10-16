@@ -3,7 +3,6 @@ package auth
 
 import (
 	"context"
-	"database/sql"
 	"errors"
 	"fmt"
 	"net/url"
@@ -38,10 +37,10 @@ type NotificationSender interface {
 }
 
 // Deps 是认证服务所需的依赖，由 main 装配后注入。
+// 守卫由装配点单点构造（含准入策略），服务内不再自建，故不需要 TokenIssuer。
 type Deps struct {
-	DB         *bun.DB
+	DB         bun.IDB
 	Guard      *platformauth.Guard[*models.User]
-	Tokens     *platformauth.TokenIssuer
 	Hasher     *hasher.Hasher
 	Cache      cache.Store
 	Mailer     mailer.Mailer
@@ -53,43 +52,32 @@ type Deps struct {
 
 // Service 实现认证用例。
 type Service struct {
-	db         *bun.DB
-	guard      *platformauth.Guard[*models.User]
-	hasher     *hasher.Hasher
-	mailer     mailer.Mailer
-	notifier   NotificationSender
-	translator *i18n.Translator
-	cfg        *config.Config
-	verifier   *verifier
-	publisher  eventbus.Publisher
+	db          bun.IDB
+	guard       *platformauth.Guard[*models.User]
+	credentials *platformauth.CredentialManager[*models.User]
+	hasher      *hasher.Hasher
+	mailer      mailer.Mailer
+	notifier    NotificationSender
+	translator  *i18n.Translator
+	cfg         *config.Config
+	verifier    *verifier
+	publisher   eventbus.Publisher
 }
 
 // NewService 构造认证服务。
+// 守卫由装配点单点构造并注入（准入策略见 policy.go），服务内不再自建第二份守卫。
 func NewService(deps Deps) *Service {
-	guard := deps.Guard
-	if guard == nil && deps.Tokens != nil && deps.DB != nil {
-		policy := platformauth.PolicyFunc[*models.User](func(ctx context.Context, u *models.User) error {
-			if err := u.GuardState(); err != nil {
-				return err
-			}
-			if deps.Config != nil && deps.Config.Auth.RequireEmailVerification && !u.EmailVerified {
-				return errs.New(errs.CodeAuthEmailNotVerified, "The email address has not been verified")
-			}
-			return nil
-		})
-		provider := models.NewUserProvider(deps.DB, deps.Hasher)
-		guard = platformauth.NewGuard(deps.Tokens, provider, policy)
-	}
 	return &Service{
-		db:         deps.DB,
-		guard:      guard,
-		hasher:     deps.Hasher,
-		mailer:     deps.Mailer,
-		notifier:   deps.Notifier,
-		translator: deps.Translator,
-		cfg:        deps.Config,
-		verifier:   newVerifier(deps.DB, deps.Cache, deps.Config),
-		publisher:  deps.Publisher,
+		db:          deps.DB,
+		guard:       deps.Guard,
+		credentials: platformauth.NewCredentialManager(deps.Guard, deps.Hasher),
+		hasher:      deps.Hasher,
+		mailer:      deps.Mailer,
+		notifier:    deps.Notifier,
+		translator:  deps.Translator,
+		cfg:         deps.Config,
+		verifier:    newVerifier(deps.DB, deps.Cache, deps.Config),
+		publisher:   deps.Publisher,
 	}
 }
 
@@ -182,16 +170,15 @@ func (s *Service) GetSession(ctx context.Context, userID string) (GetSessionReso
 	return GetSessionResource{User: projectUser(user)}, nil
 }
 
-// loadUser 兜底从数据库加载用户实体并进行状态校验。
+// loadUser 兜底从数据库加载用户实体并按守卫策略校验。
+// 必须走策略而非直接返回实体：guard.UserOrFail 失败后由本函数接管，若跳过策略，
+// 该回退路径就会绕过准入判定（封禁、未激活与未验证邮箱）。
 func (s *Service) loadUser(ctx context.Context, userID string) (*models.User, error) {
 	u, err := models.FindUserByID(ctx, s.db, userID)
 	if err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			return nil, errs.Unauthorized(errs.CodeAuthTokenInvalid, "The token is invalid")
-		}
-		return nil, errs.Internal(err)
+		return nil, errs.From(err, errs.TokenInvalid())
 	}
-	if err := s.guardAccountState(u); err != nil {
+	if err := s.guard.Policy().ValidateUser(ctx, u); err != nil {
 		return nil, err
 	}
 	return u, nil
@@ -199,11 +186,9 @@ func (s *Service) loadUser(ctx context.Context, userID string) (*models.User, er
 
 // Refresh 用刷新令牌换取新的一对令牌，旧的刷新令牌立即失效（轮换）。
 func (s *Service) Refresh(ctx context.Context, req RefreshTokenBody) (SessionResource, error) {
+	// guard.Refresh 内部已执行准入策略，无需在此重复校验账号状态。
 	user, sess, err := s.guard.Refresh(ctx, req.RefreshToken)
 	if err != nil {
-		return SessionResource{}, err
-	}
-	if err := s.guardAccountState(user); err != nil {
 		return SessionResource{}, err
 	}
 
@@ -216,34 +201,13 @@ func (s *Service) ChangePassword(ctx context.Context, userID string, req ChangeP
 		return err
 	}
 
-	account, err := models.FindCredentialAccount(ctx, s.db, userID)
-	if err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
+	if err := s.credentials.ChangePassword(ctx, userID, req.CurrentPassword, req.NewPassword); err != nil {
+		// 纯第三方登录账号没有本地密码凭据，明确提示而不是伪装成口令错误。
+		if errors.Is(err, platformauth.ErrPasswordCredentialMissing) {
 			return noCredentialError()
 		}
-		return errs.Internal(err)
+		return err
 	}
-	if account.Password == nil {
-		return noCredentialError()
-	}
-
-	matched, err := s.hasher.Check(*account.Password, req.CurrentPassword)
-	if err != nil {
-		return errs.Internal(err)
-	}
-	if !matched {
-		return errs.New(errs.CodeAuthPasswordMismatch, "The current password is incorrect")
-	}
-
-	hash, err := s.hasher.Make(req.NewPassword)
-	if err != nil {
-		return errs.Internal(err)
-	}
-	if err := models.UpdatePassword(ctx, s.db, userID, hash); err != nil {
-		return errs.Internal(err)
-	}
-	// 密码变更成功后作废该用户在此之前签发的所有会话令牌
-	_ = s.guard.InvalidateAll(ctx, userID)
 	return nil
 }
 
@@ -279,10 +243,7 @@ func (s *Service) ResetPassword(ctx context.Context, req ResetPasswordBody) (Sta
 	}
 	if err := database.RunInTx(ctx, s.db, func(txCtx context.Context) error {
 		if err := models.UpdatePassword(txCtx, s.db, user.ID, hash); err != nil {
-			if errors.Is(err, sql.ErrNoRows) {
-				return noCredentialError()
-			}
-			return errs.Internal(err)
+			return errs.From(err, noCredentialError())
 		}
 		return nil
 	}); err != nil {
@@ -302,7 +263,7 @@ func (s *Service) ResetPassword(ctx context.Context, req ResetPasswordBody) (Sta
 func (s *Service) SendVerificationOTP(ctx context.Context, language string, req SendVerificationOTPBody) (StatusResource, error) {
 	user, err := models.FindUserByEmail(ctx, s.db, req.Email)
 	if err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
+		if errs.IsNoRows(err) {
 			// 静默成功：不向未认证调用方暴露邮箱是否已注册。
 			logger.FromContext(ctx).Info("verification requested for non-existent email, ignored")
 			return StatusResource{Status: true}, nil
@@ -314,9 +275,11 @@ func (s *Service) SendVerificationOTP(ctx context.Context, language string, req 
 	}
 
 	ttl := s.cfg.Auth.OTPTTL
+	// 签发失败可能是领域拒绝（如发码冷却/窗口超限的 429），必须原样透出；
+	// 一律包成 500 会把已声明的错误码整体掩盖掉。verifier 内部的故障本身已是 500 语义。
 	code, err := s.verifier.issueCode(ctx, purposeEmailVerify, user.Email, ttl)
 	if err != nil {
-		return StatusResource{}, errs.Internal(err)
+		return StatusResource{}, err
 	}
 	notif := NewSignupVerificationNotification(user.Name, code)
 	notif.ExpiresIn = ttl
@@ -335,10 +298,7 @@ func (s *Service) VerifyEmail(ctx context.Context, req VerifyEmailBody) (StatusR
 
 	user, err := models.FindUserByEmail(ctx, s.db, email)
 	if err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			return StatusResource{}, errs.NotFound("No account is associated with this email address")
-		}
-		return StatusResource{}, errs.Internal(err)
+		return StatusResource{}, errs.From(err, errNoAccountForEmail)
 	}
 	if err := user.MarkEmailVerified(ctx, s.db); err != nil {
 		return StatusResource{}, errs.Internal(err)
@@ -355,23 +315,8 @@ const (
 
 // signInWithCredentials 校验本地密码凭据并签发令牌。
 func (s *Service) signInWithCredentials(ctx context.Context, user *models.User, password string) (SessionResource, error) {
-	pwdHash, err := models.FindCredentialPassword(ctx, s.db, user.ID)
-	if err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			return SessionResource{}, errs.InvalidCredentials()
-		}
-		return SessionResource{}, errs.Internal(err)
-	}
-	if pwdHash == nil || *pwdHash == "" {
-		return SessionResource{}, errs.InvalidCredentials()
-	}
-
-	matched, err := s.hasher.Check(*pwdHash, password)
-	if err != nil {
-		return SessionResource{}, errs.Internal(err)
-	}
-	if !matched {
-		return SessionResource{}, errs.InvalidCredentials()
+	if err := s.credentials.VerifyPassword(ctx, user.ID, password); err != nil {
+		return SessionResource{}, err
 	}
 
 	session, err := s.issueSession(ctx, user)
@@ -382,12 +327,9 @@ func (s *Service) signInWithCredentials(ctx context.Context, user *models.User, 
 	return session, nil
 }
 
-// issueSession 校验账号状态后签发双令牌并组装响应体，不写库。
+// issueSession 签发双令牌并组装响应体，不写库。
+// guard.Login 内部已执行准入策略，账号状态不再由本函数判定。
 func (s *Service) issueSession(ctx context.Context, user *models.User) (SessionResource, error) {
-	if err := s.guardAccountState(user); err != nil {
-		return SessionResource{}, err
-	}
-
 	sess, err := s.guard.Login(ctx, user)
 	if err != nil {
 		return SessionResource{}, err
@@ -405,20 +347,12 @@ func toSessionResource(sess platformauth.Session, user *models.User) SessionReso
 	}
 }
 
-// guardAccountState 拒绝封禁、未激活与（开启开关时）未验证邮箱的账号。
-func (s *Service) guardAccountState(user *models.User) error {
-	if err := user.GuardState(); err != nil {
-		return err
-	}
-	if s.cfg.Auth.RequireEmailVerification && !user.EmailVerified {
-		return errs.New(errs.CodeAuthEmailNotVerified, "The email address has not been verified")
-	}
-	return nil
-}
+// guardAccountState 已并入守卫准入策略（见 policy.go）：
+// 账号状态与邮箱验证由 Guard 在 Login/Refresh/UserOrFail 内统一执行，此处不再重复判定。
 
 // translateLookupFailure 把"账号不存在"统一翻译为凭证错误，避免泄漏账号是否存在。
 func (s *Service) translateLookupFailure(ctx context.Context, err error, identifier string) error {
-	if errors.Is(err, sql.ErrNoRows) {
+	if errs.IsNoRows(err) {
 		s.equaliseLookupTiming(identifier)
 		logger.FromContext(ctx).Info("login failed: account not found", zap.String("identifier", identifier))
 		return errs.InvalidCredentials()
@@ -457,16 +391,17 @@ func (s *Service) recordLogin(ctx context.Context, userID, method string) {
 func (s *Service) sendResetCredential(ctx context.Context, language, purpose, email string) (StatusResource, error) {
 	user, err := models.FindUserByEmail(ctx, s.db, email)
 	if err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
+		if errs.IsNoRows(err) {
 			logger.FromContext(ctx).Info("password reset requested for non-existent email, ignored")
 			return StatusResource{Status: true}, nil
 		}
 		return StatusResource{}, errs.Internal(err)
 	}
 
+	// 同上：重置凭据的签发同样可能被发码限流拒绝，错误语义不得被 Internal 覆盖。
 	code, mailKey, ttl, err := s.issueResetCredential(ctx, purpose, user.Email)
 	if err != nil {
-		return StatusResource{}, errs.Internal(err)
+		return StatusResource{}, err
 	}
 	notif := NewPasswordResetNotification(user.Name, code)
 	notif.ExpiresIn = ttl
@@ -515,10 +450,7 @@ func (s *Service) resolveResetTarget(ctx context.Context, req ResetPasswordBody)
 
 	user, err := models.FindUserByEmail(ctx, s.db, email)
 	if err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			return nil, errs.NotFound("No account is associated with this email address")
-		}
-		return nil, errs.Internal(err)
+		return nil, errs.From(err, errNoAccountForEmail)
 	}
 	return user, nil
 }
@@ -553,8 +485,11 @@ func assignUsername(user *models.User, username *string) {
 	user.DisplayUsername = &normalised
 }
 
+// errNoAccountForEmail 用于凭据核销通过但邮箱无对应账号的场景。
+var errNoAccountForEmail = errs.NotFound("No account is associated with this email address")
+
 // noCredentialError 用于本地密码凭据缺失的场景。
-func noCredentialError() error {
+func noCredentialError() *errs.Error {
 	return errs.NotFound("No password credential is associated with this account")
 }
 

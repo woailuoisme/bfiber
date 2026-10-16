@@ -8,6 +8,7 @@ import (
 	"github.com/samber/lo"
 	"github.com/uptrace/bun"
 
+	"bfiber/internal/database"
 	"bfiber/internal/database/models"
 	"bfiber/internal/platform/search"
 )
@@ -20,7 +21,7 @@ func CountUsersForSearch(ctx context.Context, db bun.IDB) (int64, error) {
 	if db == nil {
 		return 0, errors.New("invalid bun database instance provided for user count")
 	}
-	return db.NewSelect().Model((*models.User)(nil)).Count(ctx)
+	return database.ResolveDB(ctx, db).NewSelect().Model((*models.User)(nil)).Count(ctx)
 }
 
 // RegisterUserIndexer 向全局检索注册表注册 User 模型的导入器与元数据。
@@ -46,7 +47,7 @@ func ImportUsersForSearch(ctx context.Context, db bun.IDB, batchSize int, handle
 	)
 	for {
 		var users []*models.User
-		query := db.NewSelect().
+		query := database.ResolveDB(ctx, db).NewSelect().
 			Model(&users).
 			OrderExpr("? ASC", bun.Ident("u.id")).
 			Limit(int64(batchSize))

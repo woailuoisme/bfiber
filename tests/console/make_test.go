@@ -139,6 +139,20 @@ func TestGenerateCRUD_Execution(t *testing.T) {
 	assert.Contains(t, string(modelContent), `bun:"table:articles,alias:a"`)
 	assert.Contains(t, string(modelContent), "type Article struct")
 
+	// 列表与计数必须共用同一规格：模板生成的取页/计数走 ScanAndCount，
+	// 不再产出会与列表谓词漂移的独立 Count 查询。
+	assert.Contains(t, string(modelContent), "func ListArticlesAndCount(")
+	assert.Contains(t, string(modelContent), "ScanAndCount(ctx)")
+	assert.NotContains(t, string(modelContent), "func CountArticles(")
+	assert.Contains(t, string(modelContent), "database.EscapeLike(")
+
+	servicePath := filepath.Join(tempDir, "internal", "features", "admin", "article", "service.go")
+	serviceContent, err := os.ReadFile(servicePath)
+	require.NoError(t, err)
+	assert.Contains(t, string(serviceContent), "models.ListArticlesAndCount(")
+	assert.Contains(t, string(serviceContent), "pagination.Normalise()")
+	assert.NotContains(t, string(serviceContent), "models.CountArticles(")
+
 	// 3. 不带 force 再次生成，应当被全部跳过
 	results2, err := core.GenerateCRUD(opts)
 	require.NoError(t, err)

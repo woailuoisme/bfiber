@@ -150,7 +150,7 @@ func (h *Handler) Refresh(c fiber.Ctx) error {
 // @Router       /auth/sign-out [post]
 func (h *Handler) SignOut(c fiber.Ctx) error {
 	if !h.service.guard.Check(c.Context()) {
-		return errs.Unauthorized(errs.CodeAuthTokenInvalid, "Authentication is required")
+		return errs.AuthenticationRequired()
 	}
 
 	var body SignOutBody

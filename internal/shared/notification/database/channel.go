@@ -11,6 +11,7 @@ import (
 	"github.com/samber/oops"
 	"github.com/uptrace/bun"
 
+	"bfiber/internal/database"
 	"bfiber/internal/database/models"
 	"bfiber/internal/platform/errs"
 	"bfiber/internal/platform/notification/contract"
@@ -18,22 +19,19 @@ import (
 
 // Channel 数据库通知渠道实现。
 type Channel struct {
-	db *bun.DB
+	db bun.IDB
 }
 
 // NewChannel 创建数据库通知渠道实例。
-func NewChannel(db *bun.DB) *Channel {
+// 形参类型即传播契约：调用方传入根句柄还是活跃事务由其决定，本渠道每条语句再经
+// database.ResolveDB(ctx, db) 解析，因此调用方在事务内的写入不会被静默排除在外。
+func NewChannel(db bun.IDB) *Channel {
 	return &Channel{db: db}
 }
 
 // Name 返回渠道标识名。
 func (c *Channel) Name() string {
 	return "database"
-}
-
-// DB 返回底层 Bun ORM 句柄。
-func (c *Channel) DB() *bun.DB {
-	return c.db
 }
 
 // Format 将领域通知对象转换为数据库持久化载荷 *Message。
@@ -117,7 +115,7 @@ func (c *Channel) Send(ctx context.Context, notifiable any, message any) error {
 		Data:           string(dataBytes),
 	}
 
-	_, err = c.db.NewInsert().Model(notif).Exec(ctx)
+	_, err = database.ResolveDB(ctx, c.db).NewInsert().Model(notif).Exec(ctx)
 	if err != nil {
 		return oops.Code(errs.CodeInternal).In("DatabaseChannel.Send").Wrap(err)
 	}
@@ -131,7 +129,7 @@ func (c *Channel) MarkAsRead(ctx context.Context, id string) error {
 		return oops.Code(errs.CodeDatabaseUnavailable).Errorf("database: connection is not available")
 	}
 	now := time.Now().UTC()
-	if _, err := c.db.NewUpdate().
+	if _, err := database.ResolveDB(ctx, c.db).NewUpdate().
 		Model((*models.Notification)(nil)).
 		Set("read_at = ?", now).
 		Set("updated_at = ?", now).
@@ -162,7 +160,7 @@ func (c *Channel) MarkAllAsRead(ctx context.Context, notifiable any) error {
 	}
 
 	now := time.Now().UTC()
-	_, err = c.db.NewUpdate().
+	_, err = database.ResolveDB(ctx, c.db).NewUpdate().
 		Model((*models.Notification)(nil)).
 		Set("read_at = ?", now).
 		Set("updated_at = ?", now).
@@ -184,7 +182,7 @@ func (c *Channel) UnreadCount(ctx context.Context, notifiable any) (int, error) 
 		return 0, err
 	}
 
-	count, err := c.db.NewSelect().
+	count, err := database.ResolveDB(ctx, c.db).NewSelect().
 		Model((*models.Notification)(nil)).
 		Where("notifiable_type = ? AND notifiable_id = ? AND read_at IS NULL", notifiableType, notifiableID).
 		Count(ctx)
@@ -195,6 +193,8 @@ func (c *Channel) UnreadCount(ctx context.Context, notifiable any) (int, error) 
 }
 
 // Paginate 分页查询指定接收者的通知列表。
+// 区间钳制与 LIMIT/OFFSET 全部交给 database.Pagination，与用户列表共用同一套分页规则；
+// ScanAndCount 的计数查询会自动剔除 ORDER BY 与分页子句，因此 total 是全量计数而非页内计数。
 func (c *Channel) Paginate(ctx context.Context, notifiable any, page, perPage int, unreadOnly bool) ([]models.Notification, int, error) {
 	if c.db == nil {
 		return nil, 0, oops.Code(errs.CodeDatabaseUnavailable).Errorf("database: connection is not available")
@@ -204,29 +204,18 @@ func (c *Channel) Paginate(ctx context.Context, notifiable any, page, perPage in
 		return nil, 0, err
 	}
 
-	page = max(page, 1)
-	if perPage < 1 || perPage > 100 {
-		perPage = 20
-	}
-	offset := (page - 1) * perPage
-
-	q := c.db.NewSelect().
-		Model((*models.Notification)(nil)).
+	var items []models.Notification
+	q := database.ResolveDB(ctx, c.db).NewSelect().
+		Model(&items).
 		Where("notifiable_type = ? AND notifiable_id = ?", notifiableType, notifiableID)
-
 	if unreadOnly {
 		q = q.Where("read_at IS NULL")
 	}
+	q = q.Order("created_at DESC")
 
-	count, err := q.Count(ctx)
+	count, err := database.Pagination{Page: page, PageSize: perPage}.Apply(q).ScanAndCount(ctx)
 	if err != nil {
-		return nil, 0, oops.Code(errs.CodeInternal).In("DatabaseChannel.Paginate.Count").Wrap(err)
-	}
-
-	var items []models.Notification
-	err = q.Order("created_at DESC").Limit(int64(perPage)).Offset(int64(offset)).Scan(ctx, &items)
-	if err != nil {
-		return nil, 0, oops.Code(errs.CodeInternal).In("DatabaseChannel.Paginate.Scan").Wrap(err)
+		return nil, 0, oops.Code(errs.CodeInternal).In("DatabaseChannel.Paginate").Wrap(err)
 	}
 
 	return items, int(count), nil
@@ -242,7 +231,7 @@ func (c *Channel) Delete(ctx context.Context, id string) error {
 	if c.db == nil {
 		return oops.Code(errs.CodeDatabaseUnavailable).Errorf("database: connection is not available")
 	}
-	_, err := c.db.NewDelete().
+	_, err := database.ResolveDB(ctx, c.db).NewDelete().
 		Model((*models.Notification)(nil)).
 		Where("id = ?", id).
 		Exec(ctx)
@@ -262,7 +251,7 @@ func (c *Channel) ClearAll(ctx context.Context, notifiable any) error {
 		return err
 	}
 
-	_, err = c.db.NewDelete().
+	_, err = database.ResolveDB(ctx, c.db).NewDelete().
 		Model((*models.Notification)(nil)).
 		Where("notifiable_type = ? AND notifiable_id = ?", notifiableType, notifiableID).
 		Exec(ctx)

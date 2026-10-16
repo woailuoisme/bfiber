@@ -4,7 +4,6 @@ package media
 import (
 	"cmp"
 	"context"
-	"database/sql"
 	"errors"
 	"io"
 	"mime/multipart"
@@ -12,12 +11,12 @@ import (
 	"strings"
 
 	"github.com/gabriel-vasile/mimetype"
-	"github.com/samber/lo"
 	"github.com/samber/oops"
 	"github.com/uptrace/bun"
 	"go.uber.org/zap"
 
 	"bfiber/internal/config"
+	"bfiber/internal/database"
 	"bfiber/internal/database/models"
 	"bfiber/internal/platform/errs"
 	"bfiber/internal/platform/logger"
@@ -109,7 +108,7 @@ func WithOrderColumn(order int) AttachOption {
 
 // Manager 为业务层提供多态媒体附件聚合管理门面。
 type Manager struct {
-	db       *bun.DB
+	db       bun.IDB
 	disk     storage.Disk
 	pipeline Pipeline
 	image    Client
@@ -117,10 +116,12 @@ type Manager struct {
 }
 
 // NewManager 构建多态媒体管理门面实例。
+// 形参类型即传播契约：句柄是根连接还是活跃事务由调用方决定，
+// 门面内每条语句再经 database.ResolveDB(ctx, db) 解析，调用方的事务不会被静默排除。
 func NewManager(
 	mediaCfg config.MediaConfig,
 	disk storage.Disk,
-	db *bun.DB,
+	db bun.IDB,
 	pipeline Pipeline,
 	image Client,
 ) *Manager {
@@ -141,34 +142,6 @@ func (m *Manager) Pipeline() Pipeline {
 // Image 返回底层 Imgproxy 图像处理器。
 func (m *Manager) Image() Client {
 	return m.image
-}
-
-// Ping 执行底层 imgproxy 连通性探测（满足 ready.Pinger 契约）。
-func (m *Manager) Ping(ctx context.Context) error {
-	if m.image == nil {
-		return nil
-	}
-	return m.image.Ping(ctx)
-}
-
-// Driver 返回图像处理驱动标识。
-func (m *Manager) Driver() string {
-	return lo.Ternary(m.image != nil, m.image.Driver(), "imgproxy")
-}
-
-// Enabled 报告多态媒体管理器中的 imgproxy 是否已启用。
-func (m *Manager) Enabled() bool {
-	return m.image != nil && m.image.Enabled()
-}
-
-// Disk 返回底层的存储磁盘驱动句柄。
-func (m *Manager) Disk() storage.Disk {
-	return m.disk
-}
-
-// DB 返回底层数据库连接池。
-func (m *Manager) DB() *bun.DB {
-	return m.db
 }
 
 // Attach 将文件或流上传并关联至指定业务模型的多态集合中。
@@ -201,18 +174,8 @@ func (m *Manager) Attach(
 		return nil, err
 	}
 
-	// 2. 单文件模式下先清理旧的物理文件与记录；失败不阻断新文件绑定
-	if conf.SingleFile && m.db != nil {
-		if err := m.clearOldFiles(ctx, modelType, modelID, collection); err != nil {
-			logger.FromContext(ctx).Debug("failed to clear old media files, proceeding with new upload",
-				zap.Error(err),
-				zap.String("model_type", modelType),
-				zap.String("model_id", modelID),
-			)
-		}
-	}
-
-	// 3. 将新媒体记录持久化至数据库
+	// 2. 单文件模式下旧记录与新记录在同一事务内原子替换。
+	// 物理文件的删除无法回滚，因此先只删记录，待事务提交后再删文件。
 	friendlyName := cmp.Or(conf.Name, fileInfo.OriginalName, fileInfo.FileName)
 	mediaRecord := &models.Media{
 		ModelType:        modelType,
@@ -229,18 +192,56 @@ func (m *Manager) Attach(
 		Manipulations:    conf.Manipulations,
 	}
 
-	if m.db != nil {
-		_, err = m.db.NewInsert().Model(mediaRecord).Exec(ctx)
-		if err != nil {
-			// 入库失败时尝试回滚删除刚上传的物理文件
-			if delErr := m.pipeline.Delete(ctx, fileInfo.Path); delErr != nil {
-				logger.FromContext(ctx).Warn("failed to clean up orphaned media file after DB insert failure",
-					zap.Error(delErr),
-					zap.String("path", fileInfo.Path),
-				)
+	if m.db == nil {
+		return mediaRecord, nil
+	}
+
+	var replaced []models.Media
+	err = database.RunInTx(ctx, m.db, func(txCtx context.Context) error {
+		if conf.SingleFile {
+			old, loadErr := m.oldMediaInCollection(txCtx, modelType, modelID, collection)
+			if loadErr != nil {
+				return loadErr
 			}
-			return nil, oops.Code(errs.CodeInternal).In("media.Manager.Attach").Wrap(err)
+			replaced = old
+			if _, delErr := database.ResolveDB(txCtx, m.db).NewDelete().
+				Model((*models.Media)(nil)).
+				Where("model_type = ? AND model_id = ? AND collection_name = ?", modelType, modelID, collection).
+				Exec(txCtx); delErr != nil {
+				return delErr
+			}
 		}
+
+		_, insertErr := database.ResolveDB(txCtx, m.db).NewInsert().Model(mediaRecord).Exec(txCtx)
+		if insertErr != nil {
+			return insertErr
+		}
+
+		// 物理文件删除无法随事务回滚，只能登记到提交之后。
+		// 若本函数运行在调用方持有的事务内，回调会推迟到那次提交成功之后执行；
+		// 若在闭包内直接删除，外层事务回滚后旧记录会被恢复，却已指向不存在的文件。
+		replacedFiles := replaced
+		database.OnCommit(txCtx, func() {
+			for _, item := range replacedFiles {
+				if delErr := m.disk.Delete(ctx, item.FileName); delErr != nil {
+					logger.FromContext(ctx).Warn("failed to delete replaced media file",
+						zap.Error(delErr),
+						zap.String("path", item.FileName),
+					)
+				}
+			}
+		})
+		return nil
+	})
+	if err != nil {
+		// 事务已回滚，新上传的物理文件不应留在磁盘上。
+		if delErr := m.pipeline.Delete(ctx, fileInfo.Path); delErr != nil {
+			logger.FromContext(ctx).Warn("failed to clean up orphaned media file after DB insert failure",
+				zap.Error(delErr),
+				zap.String("path", fileInfo.Path),
+			)
+		}
+		return nil, oops.Code(errs.CodeInternal).In("media.Manager.Attach").Wrap(err)
 	}
 
 	return mediaRecord, nil
@@ -262,147 +263,17 @@ func (m *Manager) uploadSource(ctx context.Context, source any, category, diskNa
 	}
 }
 
-// clearOldFiles 物理删除并移出指定模型集合下的所有旧附件。
-func (m *Manager) clearOldFiles(ctx context.Context, modelType, modelID, collection string) error {
+// oldMediaInCollection 查询指定模型集合下现存的附件记录。
+// 只读不删：记录删除由调用方在事务内完成，物理文件在事务提交后删除。
+func (m *Manager) oldMediaInCollection(ctx context.Context, modelType, modelID, collection string) ([]models.Media, error) {
 	var oldMedia []models.Media
-	err := m.db.NewSelect().
+	if err := database.ResolveDB(ctx, m.db).NewSelect().
 		Model(&oldMedia).
 		Where("model_type = ? AND model_id = ? AND collection_name = ?", modelType, modelID, collection).
-		Scan(ctx)
-	if err != nil {
-		return err
-	}
-
-	for _, item := range oldMedia {
-		_ = m.disk.Delete(ctx, item.FileName)
-	}
-
-	_, err = m.db.NewDelete().
-		Model((*models.Media)(nil)).
-		Where("model_type = ? AND model_id = ? AND collection_name = ?", modelType, modelID, collection).
-		Exec(ctx)
-	return err
-}
-
-// Get 查询指定业务模型下某个集合（或全部集合）的所有媒体附件。
-func (m *Manager) Get(ctx context.Context, target any, collection ...string) ([]models.Media, error) {
-	attachable := ToAttachable(target)
-	if attachable == nil {
-		return nil, oops.Code(errs.CodeBadRequest).Errorf("media: invalid attachable target")
-	}
-
-	if m.db == nil {
-		return nil, oops.Code(errs.CodeDatabaseUnavailable).Errorf("media: database connection is not available")
-	}
-
-	q := m.db.NewSelect().
-		Model((*models.Media)(nil)).
-		Where("model_type = ? AND model_id = ?", attachable.GetModelType(), attachable.GetModelID())
-
-	if len(collection) > 0 && strings.TrimSpace(collection[0]) != "" {
-		q = q.Where("collection_name = ?", strings.TrimSpace(collection[0]))
-	}
-
-	var items []models.Media
-	err := q.Order("order_column ASC", "id ASC").Scan(ctx, &items)
-	if err != nil {
-		return nil, oops.Code(errs.CodeInternal).In("media.Manager.Get").Wrap(err)
-	}
-
-	return items, nil
-}
-
-// GetFirst 查询指定业务模型特定集合下的首个媒体附件（如头像）。
-func (m *Manager) GetFirst(ctx context.Context, target any, collection string) (*models.Media, error) {
-	items, err := m.Get(ctx, target, collection)
-	if err != nil {
+		Scan(ctx); err != nil {
 		return nil, err
 	}
-	if len(items) == 0 {
-		return nil, oops.Code(errs.CodeNotFound).Wrap(ErrMediaNotFound)
-	}
-	return &items[0], nil
-}
-
-// FindByUUID 根据对外暴露的安全唯一 UUID 查询媒体附件记录。
-func (m *Manager) FindByUUID(ctx context.Context, uuid string) (*models.Media, error) {
-	if strings.TrimSpace(uuid) == "" {
-		return nil, oops.Code(errs.CodeBadRequest).Errorf("media: uuid cannot be empty")
-	}
-
-	if m.db == nil {
-		return nil, oops.Code(errs.CodeDatabaseUnavailable).Errorf("media: database connection is not available")
-	}
-
-	var item models.Media
-	err := m.db.NewSelect().
-		Model(&item).
-		Where("uuid = ?", strings.TrimSpace(uuid)).
-		Scan(ctx)
-	if err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			return nil, oops.Code(errs.CodeNotFound).Wrap(ErrMediaNotFound)
-		}
-		return nil, oops.Code(errs.CodeNotFound).In("media.Manager.FindByUUID").Wrap(err)
-	}
-
-	return &item, nil
-}
-
-// FindByID 根据自增物理主键 ID 查询媒体附件记录。
-func (m *Manager) FindByID(ctx context.Context, id int64) (*models.Media, error) {
-	if m.db == nil {
-		return nil, oops.Code(errs.CodeDatabaseUnavailable).Errorf("media: database connection is not available")
-	}
-
-	var item models.Media
-	err := m.db.NewSelect().
-		Model(&item).
-		Where("id = ?", id).
-		Scan(ctx)
-	if err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			return nil, oops.Code(errs.CodeNotFound).Wrap(ErrMediaNotFound)
-		}
-		return nil, oops.Code(errs.CodeNotFound).In("media.Manager.FindByID").Wrap(err)
-	}
-
-	return &item, nil
-}
-
-// Delete 删除指定 UUID 的媒体附件，同时删除底层物理文件与数据库记录。
-func (m *Manager) Delete(ctx context.Context, uuid string) error {
-	mediaItem, err := m.FindByUUID(ctx, uuid)
-	if err != nil {
-		return err
-	}
-
-	// 1. 删除底层存储文件
-	_ = m.disk.Delete(ctx, mediaItem.FileName)
-
-	// 2. 删除数据库记录
-	_, err = m.db.NewDelete().
-		Model((*models.Media)(nil)).
-		Where("uuid = ?", uuid).
-		Exec(ctx)
-	if err != nil {
-		return oops.Code(errs.CodeInternal).In("media.Manager.Delete").Wrap(err)
-	}
-
-	return nil
-}
-
-// ClearCollection 清空指定业务模型特定集合下的所有媒体附件（物理文件与数据库记录全部清除）。
-func (m *Manager) ClearCollection(ctx context.Context, target any, collection string) error {
-	attachable := ToAttachable(target)
-	if attachable == nil {
-		return oops.Code(errs.CodeBadRequest).Errorf("media: invalid attachable target")
-	}
-	if m.db == nil {
-		return oops.Code(errs.CodeDatabaseUnavailable).Errorf("media: database connection is not available")
-	}
-
-	return m.clearOldFiles(ctx, attachable.GetModelType(), attachable.GetModelID(), strings.TrimSpace(collection))
+	return oldMedia, nil
 }
 
 // URL 智能生成媒体文件的访问 URL。
@@ -422,14 +293,6 @@ func (m *Manager) URL(mediaItem *models.Media, opts ...ProcessOption) string {
 
 	url, _ := m.disk.URL(mediaItem.FileName)
 	return url
-}
-
-// Thumbnail 快捷获取多态媒体文件的缩略图 URL。
-func (m *Manager) Thumbnail(mediaItem *models.Media, width, height int) string {
-	return m.URL(mediaItem,
-		WithResizingType(ResizeFill),
-		WithResize(width, height),
-	)
 }
 
 // Avatar 快捷获取多态媒体文件的头像裁切 URL。

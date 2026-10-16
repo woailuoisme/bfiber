@@ -9,7 +9,7 @@ import (
 // UserResource 是认证端点返回的用户档案资源视图。
 type UserResource struct {
 	// 用户唯一标识
-	ID string `json:"id" example:"usr_01J9X4N8Y0ABCD"`
+	ID string `json:"id" example:"019572d4-a6c8-78b1-8cf0-281b94c032a1"`
 	// 用户展示昵称
 	Name string `json:"name" example:"Alex Mercer"`
 	// 用户电子邮箱

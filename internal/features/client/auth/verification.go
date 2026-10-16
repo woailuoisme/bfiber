@@ -6,9 +6,7 @@ import (
 	"crypto/rand"
 	"crypto/sha256"
 	"crypto/subtle"
-	"database/sql"
 	"encoding/hex"
-	"errors"
 	"fmt"
 	"math/big"
 	"strings"
@@ -32,34 +30,44 @@ const (
 	purposeResetOTP    = "password-reset-otp"
 )
 
-// 验证码规格与失败尝试计数。计数键由 cache.Key 构造（"auth" / "otp-attempts" / 标识）。
+// 验证码规格、失败尝试计数与发码限流。键由 cache.Key 构造（"auth" / 用途分段 / 标识）。
 const (
 	otpSpace = 1000000
 	// otpAttemptsTTL 必须不短于任何一种凭据的寿命，否则计数会先于凭据失效。
 	otpAttemptsTTL = time.Hour
+	// otpSendWindow 是发码窗口限流的计数窗口长度。
+	otpSendWindow = time.Hour
 )
 
 // verifier 负责一次性凭据的签发与核销。
 // 明文只出现在邮件里，库里存的是 HMAC-SHA256 摘要，因此拿到库也还原不出可用凭据。
 type verifier struct {
-	db          bun.IDB
-	cache       cache.Store
-	key         []byte
-	maxAttempts int
+	db               bun.IDB
+	cache            cache.Store
+	key              []byte
+	maxAttempts      int
+	sendCooldown     time.Duration
+	sendMaxPerWindow int
 }
 
 // newVerifier 构造 verifier，密钥由 JWT 密钥派生并做用途域分离。
 func newVerifier(db bun.IDB, cacheClient cache.Store, cfg *config.Config) *verifier {
 	return &verifier{
-		db:          db,
-		cache:       cacheClient,
-		key:         deriveKey(cfg.JWT.Secret, "verification"),
-		maxAttempts: cfg.Auth.OTPMaxAttempts,
+		db:               db,
+		cache:            cacheClient,
+		key:              deriveKey(cfg.JWT.Secret, "verification"),
+		maxAttempts:      cfg.Auth.OTPMaxAttempts,
+		sendCooldown:     cfg.Auth.OTPSendCooldown,
+		sendMaxPerWindow: cfg.Auth.OTPSendMaxPerWindow,
 	}
 }
 
 // issueCode 为用户邮箱签发一枚 6 位数字验证码，返回明文。
 func (v *verifier) issueCode(ctx context.Context, purpose, email string, ttl time.Duration) (string, error) {
+	if err := v.checkSendQuota(ctx, purpose, email); err != nil {
+		return "", err
+	}
+
 	code, err := randomCode()
 	if err != nil {
 		return "", err
@@ -72,6 +80,10 @@ func (v *verifier) issueCode(ctx context.Context, purpose, email string, ttl tim
 
 // issueToken 为用户邮箱签发一枚 URL 安全的链接令牌，返回明文。
 func (v *verifier) issueToken(ctx context.Context, purpose, email string, ttl time.Duration) (string, error) {
+	if err := v.checkSendQuota(ctx, purpose, email); err != nil {
+		return "", err
+	}
+
 	token, err := randomToken()
 	if err != nil {
 		return "", err
@@ -80,6 +92,41 @@ func (v *verifier) issueToken(ctx context.Context, purpose, email string, ttl ti
 		return "", err
 	}
 	return token, nil
+}
+
+// checkSendQuota 施加同一凭据标识的发码冷却与窗口上限。
+//
+// 超限返回 AUTH_OTP_RATE_LIMITED —— 即 api.md 声明的「同一邮箱请求凭据过于频繁」。
+// 先判窗口上限再置冷却：被窗口拒绝的请求不应再留下冷却键，否则已超小时上限的调用方
+// 还会被额外罚一次冷却。缓存不可用时放行并记 Error，与失败尝试计数同策略：
+// 限流组件故障不得阻断注册与重置流程。
+func (v *verifier) checkSendQuota(ctx context.Context, purpose, email string) error {
+	if v.cache == nil || (v.sendCooldown <= 0 && v.sendMaxPerWindow <= 0) {
+		return nil
+	}
+
+	identifier := verificationIdentifier(purpose, email)
+
+	if v.sendMaxPerWindow > 0 {
+		sent, err := v.cache.Increment(ctx, cache.Key("auth", "otp-send-window", identifier), otpSendWindow)
+		if err != nil {
+			logger.FromContext(ctx).Error("failed to record verification send window, request allowed", zap.Error(err))
+		} else if sent > int64(v.sendMaxPerWindow) {
+			return errOTPRateLimited
+		}
+	}
+
+	if v.sendCooldown > 0 {
+		acquired, err := v.cache.SetNX(ctx, cache.Key("auth", "otp-send-cooldown", identifier), "1", v.sendCooldown)
+		switch {
+		case err != nil:
+			logger.FromContext(ctx).Error("failed to record verification send cooldown, request allowed", zap.Error(err))
+		case !acquired:
+			return errOTPRateLimited
+		}
+	}
+
+	return nil
 }
 
 // store 写入凭据摘要。
@@ -93,8 +140,9 @@ func (v *verifier) store(ctx context.Context, purpose, email, code string, ttl t
 }
 
 var (
-	errOTPExpired = errs.New(errs.CodeAuthOTPExpired, "The verification code has expired")
-	errOTPInvalid = errs.New(errs.CodeAuthOTPInvalid, "The verification code is incorrect")
+	errOTPExpired     = errs.New(errs.CodeAuthOTPExpired, "The verification code has expired")
+	errOTPInvalid     = errs.New(errs.CodeAuthOTPInvalid, "The verification code is incorrect")
+	errOTPRateLimited = errs.New(errs.CodeAuthOTPRateLimited, "Too many verification code requests, please try again later")
 )
 
 // consume 核销一枚凭据。区分"已过期"与"不正确"，并累计失败次数以防暴力破解。
@@ -107,10 +155,7 @@ func (v *verifier) consume(ctx context.Context, purpose, email, code string) err
 
 	record, err := models.FindVerification(ctx, v.db, identifier)
 	if err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			return errOTPExpired
-		}
-		return errs.Internal(err)
+		return errs.From(err, errOTPExpired)
 	}
 
 	if !time.Now().UTC().Before(record.ExpiresAt) {

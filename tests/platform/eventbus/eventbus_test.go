@@ -42,8 +42,13 @@ type plainEvent struct {
 func TestEventBus_NewAndRegister(t *testing.T) {
 	log := zap.NewNop()
 
-	// 1. 默认注册
-	mgr, err := eventbus.RegisterEventBus(nil, log)
+	// 1. 默认装配（生产路径：显式传配置）
+	mgr, err := eventbus.NewManager(config.EventBusConfig{
+		Driver:      eventbus.DriverGoChannel,
+		TopicPrefix: "bfiber",
+		LogLevel:    "warn",
+		BufferSize:  2048,
+	}, log)
 	require.NoError(t, err)
 	require.NotNil(t, mgr)
 	require.NotNil(t, mgr.EventBus())
@@ -62,7 +67,7 @@ func TestEventBus_NewAndRegister(t *testing.T) {
 			BufferSize:  512,
 		},
 	}
-	mgr2, err := eventbus.RegisterEventBus(cfg, log)
+	mgr2, err := eventbus.NewManager(cfg.EventBus, log)
 	require.NoError(t, err)
 	require.NotNil(t, mgr2)
 	require.NoError(t, mgr2.Close())

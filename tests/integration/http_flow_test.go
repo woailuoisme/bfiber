@@ -517,6 +517,24 @@ func TestRateLimitHeaders(t *testing.T) {
 	assert.NotEmpty(t, result.Header.Get("x-request-id"), "每个响应都必须回写追踪标识")
 }
 
+// TestOTPSendRateLimited 校验同一邮箱连续请求凭据会被发码冷却拦下，
+// 并发出 api.md 声明的 AUTH_OTP_RATE_LIMITED —— 该码此前只有声明与状态码注册、没有发出点。
+func TestOTPSendRateLimited(t *testing.T) {
+	engine := newEngine(t)
+	_, _, _, email := signUp(t, engine)
+
+	first := callJSON(t, engine, http.MethodPost, "/v1/auth/send-verification-otp", map[string]any{"email": email}, "")
+	require.Equal(t, http.StatusOK, first.Status, first.Raw)
+
+	second := callJSON(t, engine, http.MethodPost, "/v1/auth/send-verification-otp", map[string]any{"email": email}, "")
+	require.Equal(t, http.StatusTooManyRequests, second.Status, second.Raw)
+	assert.Equal(t, "AUTH_OTP_RATE_LIMITED", str(second.Body, "code"))
+
+	// 冷却按凭据标识隔离：换一个邮箱不应被上一个邮箱的冷却牵连。
+	other := callJSON(t, engine, http.MethodPost, "/v1/auth/send-verification-otp", map[string]any{"email": uniqueEmail()}, "")
+	assert.NotEqual(t, http.StatusTooManyRequests, other.Status, other.Raw)
+}
+
 // TestEmailVerificationOTPFlow 走一遍真实的邮件验证码链路。
 // 依赖 Mailpit 的 HTTP 接口；不可达时跳过而不是伪装通过。
 func TestEmailVerificationOTPFlow(t *testing.T) {

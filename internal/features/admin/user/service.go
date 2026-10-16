@@ -2,8 +2,6 @@ package admin
 
 import (
 	"context"
-	"database/sql"
-	"errors"
 	"io"
 	"strings"
 
@@ -26,7 +24,7 @@ type passwordHasher interface {
 
 // Deps 声明用户管理服务的外部依赖。
 type Deps struct {
-	DB     *bun.DB
+	DB     bun.IDB
 	Hasher passwordHasher
 }
 
@@ -44,9 +42,9 @@ func NewService(deps Deps) *Service {
 	}
 }
 
-// ListUsers 返回分页用户列表，排序与过滤都走白名单。
+// ListUsers 返回分页用户列表，过滤、排序与分页全部由 UserQuery 规格承载。
 func (s *Service) ListUsers(ctx context.Context, query ListUsersQueryParams) ([]UserResource, response.Meta, error) {
-	users, meta, err := database.Paginate[models.User](ctx, s.db, query)
+	users, meta, err := query.ToQuery().Paginate(ctx, s.db)
 	if err != nil {
 		return nil, response.Meta{}, errs.Internal(err)
 	}
@@ -57,22 +55,21 @@ func (s *Service) ListUsers(ctx context.Context, query ListUsersQueryParams) ([]
 	return items, meta, nil
 }
 
-// ExportUsers 流式导出匹配条件的所有用户数据至目标 io.Writer，采用物理分块拉取杜绝 OOM。
+// ExportUsers 流式导出匹配条件的所有用户数据至目标 io.Writer。
+// 与 ListUsers 共用同一 UserQuery 规格，采用物理分块拉取杜绝 OOM。
 func (s *Service) ExportUsers(ctx context.Context, query ListUsersQueryParams, w io.Writer, opts ...excel.ExportOption) error {
-	fetcher := UserFetchFunc(func(ctx context.Context, filter models.UserListFilter, offset, limit int) ([]models.User, error) {
-		return models.ListUsers(ctx, s.db, filter, offset, limit)
-	})
-	return ExportChunkedStream(ctx, w, fetcher, query.ToFilter(), opts...)
+	spec := query.ToQuery()
+	fetch := func(ctx context.Context, window database.Window) ([]models.User, error) {
+		return spec.Chunk(ctx, s.db, window)
+	}
+	return ExportChunkedStream(ctx, w, fetch, opts...)
 }
 
 // GetUser 返回管理视角的单个用户。
 func (s *Service) GetUser(ctx context.Context, id string) (UserResource, error) {
 	entity, err := models.FindUserByID(ctx, s.db, id)
 	if err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			return UserResource{}, errs.NotFound("The requested user does not exist")
-		}
-		return UserResource{}, errs.Internal(err)
+		return UserResource{}, errs.From(err, errs.UserNotFound())
 	}
 	return toUserResource(entity), nil
 }
@@ -110,43 +107,17 @@ func (s *Service) CreateUser(ctx context.Context, body CreateUserBody) (UserReso
 
 // UpdateUser 由管理员局部更新用户，含角色、状态与封禁信息。
 func (s *Service) UpdateUser(ctx context.Context, id string, body UpdateUserBody) (UserResource, error) {
-	fields := body.ToFields()
-	if username, ok := fields["username"].(string); ok && username != "" {
-		if err := models.CheckUsernameAvailable(ctx, s.db, id, username); err != nil {
-			return UserResource{}, err
-		}
-	}
-
-	updated, err := models.UpdateUserFields(ctx, s.db, id, fields)
+	updated, err := models.ApplyUserPatch(ctx, s.db, id, body.ToFields())
 	if err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			return UserResource{}, errs.NotFound("The requested user does not exist")
-		}
-		return UserResource{}, models.MapUserUniqueConflict(err)
+		return UserResource{}, err
 	}
 	return toUserResource(updated), nil
 }
 
 // DeleteUser 软删除指定用户。
 func (s *Service) DeleteUser(ctx context.Context, id string) error {
-	res, err := database.ResolveDB(ctx, s.db).NewDelete().
-		Model((*models.User)(nil)).
-		Where("id = ?", id).
-		Exec(ctx)
-	if err != nil {
-		return errs.Internal(err)
-	}
-	affected, err := res.RowsAffected()
-	if err != nil {
-		return errs.Internal(err)
-	}
-	if affected == 0 {
-		return errs.NotFound("The requested user does not exist")
+	if err := models.DeleteUser(ctx, s.db, id); err != nil {
+		return errs.From(err, errs.UserNotFound())
 	}
 	return nil
-}
-
-// NormalisePagination 将分页参数收敛到允许的安全区间。
-func NormalisePagination(page, pageSize int) (int, int) {
-	return (database.Pagination{Page: page, PageSize: pageSize}).Normalise()
 }

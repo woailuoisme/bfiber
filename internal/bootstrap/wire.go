@@ -114,7 +114,9 @@ func NewApplication(ctx context.Context, portOverride int) (*Application, error)
 	}
 
 	// 初始化客户端与管理端 Guard 及多守卫注册中心 (Multiple Guards)
-	clientGuard := platformauth.NewGuard(tokens, userProvider, models.ClientPolicy{})
+	// 客户端准入策略由 client/auth 切片导出（账号状态 + 按配置的邮箱验证），装配点只负责注入；
+	// 管理端策略仍由 models.AdminPolicy 承载（角色准入 + 账号状态）。
+	clientGuard := platformauth.NewGuard(tokens, userProvider, auth.AccessPolicy(cfg))
 	adminGuard := platformauth.NewGuard(tokens, userProvider, models.AdminPolicy{})
 
 	authManager := platformauth.NewManager().
@@ -140,7 +142,6 @@ func NewApplication(ctx context.Context, portOverride int) (*Application, error)
 	authService := auth.NewService(auth.Deps{
 		DB:         db,
 		Guard:      clientGuard,
-		Tokens:     tokens,
 		Hasher:     hasherClient,
 		Cache:      cacheClient,
 		Mailer:     mailerClient,
@@ -155,9 +156,7 @@ func NewApplication(ctx context.Context, portOverride int) (*Application, error)
 		Hasher: hasherClient,
 	})
 	adminAuthService := adminauth.NewService(adminauth.Deps{
-		DB:     db,
 		Guard:  adminGuard,
-		Tokens: tokens,
 		Hasher: hasherClient,
 	})
 
@@ -169,14 +168,15 @@ func NewApplication(ctx context.Context, portOverride int) (*Application, error)
 	mediaManager := media.New(cfg.Media, cfg.Storage, disk, db)
 	profileService := profile.NewService(db, mediaManager)
 
-	// 初始化 Temporal 工作流客户端与就绪探针适配器
-	temporalClient, temporalPinger, err := initTemporalSubsystem(cfg, log, td)
+	// 初始化 Temporal 工作流客户端与就绪探针适配器；
+	// 客户端句柄无需在装配后保留——其释放已登记到 teardown，仅探针需继续暴露给就绪检查。
+	_, temporalPinger, err := initTemporalSubsystem(cfg, log, td)
 	if err != nil {
 		return nil, td.fail(err)
 	}
 
-	// 初始化 InfluxDB 3 时序数据库客户端与就绪探针适配器
-	influxClient, influxPinger, err := initInfluxDBSubsystem(cfg, log, td)
+	// 初始化 InfluxDB 3 时序数据库客户端与就绪探针适配器（同上，句柄由 teardown 负责释放）。
+	_, influxPinger, err := initInfluxDBSubsystem(cfg, log, td)
 	if err != nil {
 		return nil, td.fail(err)
 	}
@@ -204,8 +204,7 @@ func NewApplication(ctx context.Context, portOverride int) (*Application, error)
 		DB:      db,
 	})
 	realtimeHandler := realtimeFeature.NewHandler(realtimeService)
-	wechatManager, err := wechat.NewManager(cfg.WeChat, cacheClient)
-	if err != nil {
+	if _, err := wechat.NewManager(cfg.WeChat, cacheClient); err != nil {
 		return nil, td.fail(err)
 	}
 
@@ -230,31 +229,16 @@ func NewApplication(ctx context.Context, portOverride int) (*Application, error)
 		return nil, td.fail(err)
 	}
 
-	pdfService, err := pdf.RegisterPDF(cfg, disk, log)
-	if err != nil {
+	if _, err := pdf.RegisterPDF(cfg, disk, log); err != nil {
 		return nil, td.fail(err)
 	}
 
 	app := &Application{
-		cfg:          cfg,
-		logger:       log,
-		db:           db,
-		cache:        cacheClient,
-		locker:       locker,
-		mailer:       mailerClient,
-		notification: notifier,
-		storage:      disk,
-		media:        mediaManager,
-		pdf:          pdfService,
-		wechat:       wechatManager,
-		payment:      paymentManager,
-		realtime:     realtimeGateway,
-		search:       searchClient,
-		eventbus:     eventBusManager,
-		queue:        queueClient,
-		temporal:     temporalClient,
-		influxdb:     influxClient,
-		engine:       engine,
+		teardown: td,
+		cfg:      cfg,
+		logger:   log,
+		eventbus: eventBusManager,
+		engine:   engine,
 	}
 
 	registerShutdownHooks(app)
@@ -318,7 +302,8 @@ func logDatabaseReady(ctx context.Context, log *zap.Logger, db *bun.DB, cfg conf
 	}
 }
 
-// teardown 管理装配中途失败时的逆序资源清理。
+// teardown 是全部外部资源的唯一释放链：按登记顺序的逆序释放，
+// 先创建的资源后释放，遥测与错误上报因此天然排在最后。装配失败与正常关闭共用同一条链。
 type teardown struct {
 	log     *zap.Logger
 	closers []func() error
@@ -327,13 +312,18 @@ type teardown struct {
 // add 登记资源释放回调函数。
 func (t *teardown) add(closer func() error) { t.closers = append(t.closers, closer) }
 
-// fail 逆序释放已登记资源并返回原始错误。
-func (t *teardown) fail(cause error) error {
+// close 逆序释放全部已登记资源；单个资源释放失败只记日志，不中断剩余资源的释放。
+func (t *teardown) close() {
 	for _, closer := range slices.Backward(t.closers) {
 		if err := closer(); err != nil && t.log != nil {
 			t.log.Warn("failed to close resource during teardown", zap.Error(err))
 		}
 	}
+}
+
+// fail 释放已登记资源并返回装配失败的原始错误。
+func (t *teardown) fail(cause error) error {
+	t.close()
 	return cause
 }
 

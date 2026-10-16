@@ -16,57 +16,19 @@ import (
 	admin "bfiber/internal/features/admin/user"
 )
 
-func TestUsersExportContract(t *testing.T) {
-	t.Parallel()
-
-	now := time.Date(2026, 1, 15, 10, 0, 0, 0, time.UTC)
-	users := []*models.User{
-		{
-			Base:   database.Base{ID: "usr_001", CreatedAt: now},
-			Name:   "Alice",
-			Email:  "alice@example.com",
-			Role:   models.RoleAdmin,
-			Status: models.StatusActive,
-		},
+// chunkFetcher 把内存切片包装成 UserChunkFetcher，模拟按偏移量分块拉取。
+func chunkFetcher(users []models.User) admin.UserChunkFetcher {
+	return func(_ context.Context, window database.Window) ([]models.User, error) {
+		if window.Offset >= len(users) {
+			return nil, nil
+		}
+		return users[window.Offset:min(window.Offset+window.Limit, len(users))], nil
 	}
-
-	exp := admin.NewUsersExport(users)
-
-	assert.Equal(t, "Users", exp.Title())
-	assert.Equal(t, []string{"ID", "Name", "Email", "Role", "Status", "Created At"}, exp.Headings())
-	assert.Equal(t, users, exp.FromSlice())
-
-	row := exp.Mapping(users[0])
-	require.Len(t, row, 6)
-	assert.Equal(t, "usr_001", row[0])
-	assert.Equal(t, "Alice", row[1])
-	assert.Equal(t, "alice@example.com", row[2])
-	assert.Equal(t, models.RoleAdmin, row[3])
-	assert.Equal(t, models.StatusActive, row[4])
-	assert.Equal(t, now.Format(time.RFC3339), row[5])
-
-	// 验证流式导出到内存 buffer
-	var buf bytes.Buffer
-	err := admin.ExportStream(t.Context(), &buf, users)
-	require.NoError(t, err)
-	assert.Positive(t, buf.Len())
 }
 
-type mockUserFetcher struct {
-	users []models.User
-	calls int
-}
-
-func (m *mockUserFetcher) List(_ context.Context, _ models.UserListFilter, offset, limit int) ([]models.User, error) {
-	m.calls++
-	if offset >= len(m.users) {
-		return nil, nil
-	}
-	end := min(offset+limit, len(m.users))
-	return m.users[offset:end], nil
-}
-
-func TestUsersChunkedExportContract(t *testing.T) {
+// TestUsersExportStreamContract 校验分块流式导出这一条生产路径：
+// 表头、逐列映射与分块推进的最终产物必须是可解码的完整 XLSX。
+func TestUsersExportStreamContract(t *testing.T) {
 	t.Parallel()
 
 	now := time.Date(2026, 1, 15, 10, 0, 0, 0, time.UTC)
@@ -81,33 +43,11 @@ func TestUsersChunkedExportContract(t *testing.T) {
 		})
 	}
 
-	fetcher := &mockUserFetcher{users: dataset}
-	chunkSize := 2
-	exp := admin.NewUsersChunkedExport(fetcher, models.UserListFilter{}, chunkSize)
-
-	assert.Equal(t, "Users", exp.Title())
-	assert.Equal(t, []string{"ID", "Name", "Email", "Role", "Status", "Created At"}, exp.Headings())
-	assert.Equal(t, 2, exp.ChunkSize())
-
-	// 直接验证 FetchChunk 行为
-	chunk, err := exp.FetchChunk(t.Context(), 0, 2)
-	require.NoError(t, err)
-	require.Len(t, chunk, 2)
-
-	// 验证 Mapping
-	row := exp.Mapping(chunk[0])
-	require.Len(t, row, 6)
-	assert.Equal(t, "usr_001", row[0])
-	assert.Equal(t, "User1", row[1])
-	assert.Equal(t, "user1@example.com", row[2])
-
-	// 验证分块流式导出全量生成真实 XLSX 文件
 	var buf bytes.Buffer
-	err = admin.ExportChunkedStream(t.Context(), &buf, fetcher, models.UserListFilter{})
-	require.NoError(t, err)
+	require.NoError(t, admin.ExportChunkedStream(t.Context(), &buf, chunkFetcher(dataset)))
 	assert.Positive(t, buf.Len())
 
-	// 解码生成的 Excel 文件验证完整性
+	// 解码生成的 Excel 文件：列序即 mapUserRow 的契约，逐列断言而非只看行数
 	f, err := excelize.OpenReader(&buf)
 	require.NoError(t, err)
 	defer func() { _ = f.Close() }()
@@ -117,8 +57,10 @@ func TestUsersChunkedExportContract(t *testing.T) {
 	// 表头 1 行 + 数据 5 行 = 6 行
 	require.Len(t, rows, 6)
 	assert.Equal(t, []string{"ID", "Name", "Email", "Role", "Status", "Created At"}, rows[0])
-	assert.Equal(t, "usr_001", rows[1][0])
-	assert.Equal(t, "User1", rows[1][1])
+	assert.Equal(t, []string{
+		"usr_001", "User1", "user1@example.com",
+		string(models.RoleUser), string(models.StatusActive), now.Format(time.RFC3339),
+	}, rows[1])
 	assert.Equal(t, "usr_005", rows[5][0])
 	assert.Equal(t, "User5", rows[5][1])
 }

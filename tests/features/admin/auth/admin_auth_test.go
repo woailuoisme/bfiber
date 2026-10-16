@@ -108,7 +108,6 @@ func setupService(repo *mockRepo) (*adminauth.Service, *authentication.TokenIssu
 	guard := authentication.NewGuard(tokens, repo, models.AdminPolicy{})
 	service := adminauth.NewService(adminauth.Deps{
 		Guard:  guard,
-		Tokens: tokens,
 		Hasher: h,
 	})
 	return service, tokens
@@ -283,6 +282,17 @@ func TestAdminGetSessionAndRoleCheck(t *testing.T) {
 	require.Error(t, err)
 	status, _ = errs.Map(err)
 	assert.Equal(t, 401, status)
+
+	// 陈旧令牌：库里已是管理员，但请求上下文的令牌声明仍只有 user。
+	// 准入策略以令牌声明为准，必须拒绝，否则拿旧令牌即可绕过 mw.Auth("admin") 的同一判定。
+	staleCtx := authentication.With(t.Context(), authentication.Identity{
+		UserID: "admin_1",
+		Roles:  []string{string(enums.RoleUser)},
+	})
+	_, err = service.GetSession(staleCtx, "admin_1")
+	require.Error(t, err)
+	status, _ = errs.Map(err)
+	assert.Equal(t, 403, status)
 }
 
 // TestAdminRefreshDemotedUserDenied 校验令牌刷新时若被降权为普通用户则拒绝续签。

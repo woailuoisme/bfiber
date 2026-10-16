@@ -19,6 +19,10 @@ var (
 	initialized   bool
 )
 
+// shutdownFlushTimeout 是进程退出前等待待发送事件投递完成的预算。
+// 装配失败与正常关闭共用同一预算，避免关闭路径的刷新时长随实现细节漂移。
+const shutdownFlushTimeout = 5 * time.Second
+
 // Init 依据配置初始化 Sentry / GlitchTip 客户端并返回优雅停机 Flush 闭包。
 // 若未激活或未配置有效 DSN，则静默保持未初始化状态，返回空操作 Flush。
 func Init(cfg config.SentryConfig, appName, appEnv, appVersion string) (func(), error) {
@@ -53,7 +57,7 @@ func Init(cfg config.SentryConfig, appName, appEnv, appVersion string) (func(), 
 	initializedMu.Unlock()
 
 	flush := func() {
-		Flush(2 * time.Second)
+		Flush(shutdownFlushTimeout)
 	}
 	return flush, nil
 }

@@ -233,9 +233,7 @@ func (f *Factory[T]) CreateMany(ctx context.Context, counts ...int) ([]*T, error
 		return items, nil
 	}
 
-	// 支持从 bun.DB 或已有事务中执行
-	runInTx := func(tx bun.IDB) error {
-		txCtx := database.WithDB(ctx, tx)
+	runInTx := func(txCtx context.Context, tx bun.IDB) error {
 		chunkSize := f.chunkSize
 		for i := 0; i < len(items); i += chunkSize {
 			end := min(i+chunkSize, len(items))
@@ -258,18 +256,11 @@ func (f *Factory[T]) CreateMany(ctx context.Context, counts ...int) ([]*T, error
 		return nil
 	}
 
-	switch db := f.db.(type) {
-	case *bun.DB:
-		if err := db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
-			return runInTx(&tx)
-		}); err != nil {
-			return nil, err
-		}
-	default:
-		// 已在外部事务中
-		if err := runInTx(db); err != nil {
-			return nil, err
-		}
+	// 统一走 database.RunInTx：f.db 已是活跃事务时天然复用，无需自行分类型处理。
+	if err := database.RunInTx(ctx, f.db, func(txCtx context.Context) error {
+		return runInTx(txCtx, database.ResolveDB(txCtx, f.db))
+	}); err != nil {
+		return nil, err
 	}
 
 	return items, nil

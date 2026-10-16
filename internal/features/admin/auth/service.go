@@ -2,45 +2,35 @@ package adminauth
 
 import (
 	"context"
-	"database/sql"
 	"errors"
-
-	"github.com/uptrace/bun"
 
 	"bfiber/internal/database/models"
 	"bfiber/internal/platform/authentication"
 	"bfiber/internal/platform/errs"
 	"bfiber/internal/platform/hasher"
 	"bfiber/internal/platform/validator"
-	"bfiber/internal/shared/enums"
 )
 
 // Deps 声明管理员认证服务的外部依赖。
+// 守卫（含其 Provider）由装配点单点构造并注入，服务内不再自建，故不需要数据库句柄与 TokenIssuer。
 type Deps struct {
-	DB     *bun.DB
 	Guard  *authentication.Guard[*models.User]
-	Tokens *authentication.TokenIssuer
 	Hasher *hasher.Hasher
 }
 
 // Service 实现后台管理员认证的业务逻辑。
 type Service struct {
-	db     bun.IDB
-	guard  *authentication.Guard[*models.User]
-	hasher *hasher.Hasher
+	guard       *authentication.Guard[*models.User]
+	credentials *authentication.CredentialManager[*models.User]
 }
 
 // NewService 构造 Service。
+// 守卫由其 Provider 与装配点单点构造后注入；服务内不再自建第二份守卫。
+// 凭据读写能力由 Provider 兼任，不再另开装配参数。
 func NewService(deps Deps) *Service {
-	guard := deps.Guard
-	if guard == nil && deps.Tokens != nil && deps.DB != nil {
-		provider := models.NewUserProvider(deps.DB, deps.Hasher)
-		guard = authentication.NewGuard(deps.Tokens, provider, models.AdminPolicy{})
-	}
 	return &Service{
-		db:     deps.DB,
-		guard:  guard,
-		hasher: deps.Hasher,
+		guard:       deps.Guard,
+		credentials: authentication.NewCredentialManager(deps.Guard, deps.Hasher),
 	}
 }
 
@@ -77,28 +67,17 @@ func (s *Service) GetSession(ctx context.Context, userID string) (GetSessionReso
 	return GetSessionResource{User: toAdminUser(user)}, nil
 }
 
-// loadAdmin 兜底加载管理员实体并进行状态校验。
+// loadAdmin 加载管理员实体并执行管理员守卫策略（角色准入 + 账号状态）。
 func (s *Service) loadAdmin(ctx context.Context, userID string) (*models.User, error) {
-	var u *models.User
-	var err error
-	switch {
-	case s.guard != nil && s.guard.Provider() != nil:
-		u, err = s.guard.Provider().FindByID(ctx, userID)
-	case s.db != nil:
-		u, err = models.FindUserByID(ctx, s.db, userID)
-	default:
-		return nil, errors.New("adminauth: neither guard provider nor db is configured")
+	if s.guard == nil || s.guard.Provider() == nil {
+		return nil, errs.Internal(errors.New("adminauth: guard provider is not configured"))
 	}
+
+	u, err := s.guard.Provider().FindByID(ctx, userID)
 	if err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			return nil, errs.Unauthorized(errs.CodeAuthTokenInvalid, "The token is invalid")
-		}
-		return nil, errs.Internal(err)
+		return nil, errs.From(err, errs.TokenInvalid())
 	}
-	if u.Role != enums.RoleAdmin {
-		return nil, errs.Forbidden("Access restricted to administrators")
-	}
-	if err := u.GuardState(); err != nil {
+	if err := s.guard.Policy().ValidateUser(ctx, u); err != nil {
 		return nil, err
 	}
 	return u, nil
@@ -131,42 +110,6 @@ func toSessionResource(sess authentication.Session, user *models.User) SessionRe
 	}
 }
 
-type credentialManager interface {
-	FindCredentialAccount(ctx context.Context, userID string) (*models.Account, error)
-	UpdatePassword(ctx context.Context, userID, passwordHash string) error
-}
-
-func (s *Service) credentialManager() credentialManager {
-	if s.guard != nil && s.guard.Provider() != nil {
-		if cm, ok := s.guard.Provider().(credentialManager); ok {
-			return cm
-		}
-	}
-	return nil
-}
-
-func (s *Service) findCredentialAccount(ctx context.Context, userID string) (*models.Account, error) {
-	if cm := s.credentialManager(); cm != nil {
-		return cm.FindCredentialAccount(ctx, userID)
-	}
-	if s.db != nil {
-		return models.FindCredentialAccount(ctx, s.db, userID)
-	}
-	return nil, sql.ErrNoRows
-}
-
-func (s *Service) updatePassword(ctx context.Context, userID, passwordHash string) error {
-	if cm := s.credentialManager(); cm != nil {
-		return cm.UpdatePassword(ctx, userID, passwordHash)
-	}
-	if s.db != nil {
-		return models.UpdatePassword(ctx, s.db, userID, passwordHash)
-	}
-	return sql.ErrNoRows
-}
-
-var errPasswordMismatch = errs.New(errs.CodeAuthPasswordMismatch, "The current password is incorrect")
-
 // ChangePassword 修改当前管理员登录密码。
 func (s *Service) ChangePassword(ctx context.Context, userID string, body ChangePasswordBody) error {
 	if err := validator.PasswordStrength("newPassword", body.NewPassword); err != nil {
@@ -177,35 +120,12 @@ func (s *Service) ChangePassword(ctx context.Context, userID string, body Change
 		return err
 	}
 
-	account, err := s.findCredentialAccount(ctx, userID)
-	if err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			return errPasswordMismatch
+	if err := s.credentials.ChangePassword(ctx, userID, body.CurrentPassword, body.NewPassword); err != nil {
+		// 本地凭据缺失统一按"当前口令不正确"处理，避免泄漏账号形态。
+		if errors.Is(err, authentication.ErrPasswordCredentialMissing) {
+			return errs.PasswordMismatch()
 		}
-		return errs.Internal(err)
+		return err
 	}
-	if account.Password == nil {
-		return errPasswordMismatch
-	}
-
-	matched, err := s.hasher.Check(*account.Password, body.CurrentPassword)
-	if err != nil {
-		return errs.Internal(err)
-	}
-	if !matched {
-		return errPasswordMismatch
-	}
-
-	hash, err := s.hasher.Make(body.NewPassword)
-	if err != nil {
-		return errs.Internal(err)
-	}
-
-	if err := s.updatePassword(ctx, userID, hash); err != nil {
-		return errs.Internal(err)
-	}
-
-	// 密码变更成功后作废该管理员在此之前签发的所有会话令牌
-	_ = s.guard.InvalidateAll(ctx, userID)
 	return nil
 }

@@ -128,6 +128,6 @@ func defaultJWTErrorHandler() fiber.ErrorHandler {
 		if errors.Is(err, jwt.ErrTokenExpired) {
 			return errs.Render(c, errs.Unauthorized(errs.CodeAuthTokenExpired, "Access token has expired"))
 		}
-		return errs.Render(c, errs.Unauthorized(errs.CodeAuthTokenInvalid, "Authentication is required"))
+		return errs.Render(c, errs.AuthenticationRequired())
 	}
 }

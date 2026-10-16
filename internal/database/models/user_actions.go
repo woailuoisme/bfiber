@@ -2,6 +2,7 @@ package models
 
 import (
 	"context"
+	"database/sql"
 	"slices"
 	"time"
 
@@ -82,8 +83,7 @@ func UpdateUserFields(ctx context.Context, db bun.IDB, id string, fields map[str
 	u := new(User)
 	query := database.ResolveDB(ctx, db).NewUpdate().
 		Model(u).
-		Where("id = ?", id).
-		Where("deleted_at IS NULL")
+		Where("id = ?", id)
 	for _, column := range cols {
 		query = query.Set(column+" = ?", fields[column])
 	}
@@ -95,6 +95,50 @@ func UpdateUserFields(ctx context.Context, db bun.IDB, id string, fields map[str
 	return u, nil
 }
 
+// ApplyUserPatch 应用用户局部更新补丁：先做用户名占用校验，再写入字段并归一化错误语义。
+//
+// 返回的是领域错误码（目标不存在、唯一冲突），HTTP 状态由 errs.Render 依码派生——本包不感知投递层。
+// 映射收敛在此而非各切片，是因为两个调用方（管理端与本人档案）需要完全相同的判定顺序，
+// 分散就会重新出现两份会漂移的错误映射。
+// 单条 UPDATE ... RETURNING 本身即原子操作，占用校验只是提前失败，唯一索引才是最终防线。
+func ApplyUserPatch(ctx context.Context, db bun.IDB, id string, fields map[string]any) (*User, error) {
+	if username, ok := fields["username"].(string); ok && username != "" {
+		if err := CheckUsernameAvailable(ctx, db, id, username); err != nil {
+			return nil, err
+		}
+	}
+
+	updated, err := UpdateUserFields(ctx, db, id, fields)
+	if err != nil {
+		if errs.IsNoRows(err) {
+			return nil, errs.UserNotFound()
+		}
+		return nil, MapUserUniqueConflict(err)
+	}
+	return updated, nil
+}
+
+// DeleteUser 软删除指定用户；目标不存在或已被删除时返回 sql.ErrNoRows。
+// 与同包其他写入器一致，只透出驱动层信号，对外语义由调用方经 errs.From 决定。
+func DeleteUser(ctx context.Context, db bun.IDB, id string) error {
+	res, err := database.ResolveDB(ctx, db).NewDelete().
+		Model((*User)(nil)).
+		Where("id = ?", id).
+		Exec(ctx)
+	if err != nil {
+		return err
+	}
+
+	affected, err := res.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if affected == 0 {
+		return sql.ErrNoRows
+	}
+	return nil
+}
+
 // SetUserAvatar 按用户 ID 更新其头像链接并返回最新实体。
 func SetUserAvatar(ctx context.Context, db bun.IDB, id, avatarURL string) (*User, error) {
 	u := new(User)
@@ -104,7 +148,6 @@ func SetUserAvatar(ctx context.Context, db bun.IDB, id, avatarURL string) (*User
 		Set("image = ?", avatarURL).
 		Set("updated_at = ?", now).
 		Where("id = ?", id).
-		Where("deleted_at IS NULL").
 		Returning("*").
 		Scan(ctx)
 	if err != nil {
@@ -121,7 +164,6 @@ func (u *User) SetAvatar(ctx context.Context, db bun.IDB, avatarURL string) erro
 		Set("image = ?", avatarURL).
 		Set("updated_at = ?", now).
 		Where("id = ?", u.ID).
-		Where("deleted_at IS NULL").
 		Exec(ctx)
 	if err == nil {
 		u.Image = &avatarURL
@@ -138,7 +180,6 @@ func (u *User) MarkEmailVerified(ctx context.Context, db bun.IDB) error {
 		Set("email_verified = ?", true).
 		Set("updated_at = ?", now).
 		Where("id = ?", u.ID).
-		Where("deleted_at IS NULL").
 		Exec(ctx)
 	if err == nil {
 		u.EmailVerified = true
@@ -155,7 +196,6 @@ func RecordLogin(ctx context.Context, db bun.IDB, userID, method string) error {
 		Set("last_login_at = ?", now).
 		Set("last_login_method = ?", method).
 		Where("id = ?", userID).
-		Where("deleted_at IS NULL").
 		Exec(ctx)
 	return err
 }
@@ -171,56 +211,10 @@ func (u *User) RecordLogin(ctx context.Context, db bun.IDB, method string) error
 	return nil
 }
 
-// Ban 封禁用户。
-func (u *User) Ban(ctx context.Context, db bun.IDB, reason string, expiresAt *time.Time) error {
-	now := time.Now().UTC()
-	q := database.ResolveDB(ctx, db).NewUpdate().
-		Model((*User)(nil)).
-		Set("banned = ?", true).
-		Set("status = ?", StatusBanned).
-		Set("ban_reason = ?", reason).
-		Set("ban_expires = ?", expiresAt).
-		Set("updated_at = ?", now).
-		Where("id = ?", u.ID).
-		Where("deleted_at IS NULL")
-	_, err := q.Exec(ctx)
-	if err == nil {
-		u.Banned = true
-		u.Status = StatusBanned
-		u.BanReason = &reason
-		u.BanExpires = expiresAt
-		u.UpdatedAt = now
-	}
-	return err
-}
-
-// Unban 解封用户。
-func (u *User) Unban(ctx context.Context, db bun.IDB) error {
-	now := time.Now().UTC()
-	_, err := database.ResolveDB(ctx, db).NewUpdate().
-		Model((*User)(nil)).
-		Set("banned = ?", false).
-		Set("status = ?", StatusActive).
-		Set("ban_reason = NULL").
-		Set("ban_expires = NULL").
-		Set("updated_at = ?", now).
-		Where("id = ?", u.ID).
-		Where("deleted_at IS NULL").
-		Exec(ctx)
-	if err == nil {
-		u.Banned = false
-		u.Status = StatusActive
-		u.BanReason = nil
-		u.BanExpires = nil
-		u.UpdatedAt = now
-	}
-	return err
-}
-
 // GuardState 校验用户的通用封禁与活跃状态。
 func (u *User) GuardState() error {
 	if u == nil {
-		return errs.Unauthorized(errs.CodeAuthTokenInvalid, "The token is invalid")
+		return errs.TokenInvalid()
 	}
 	if u.IsBanned(time.Now().UTC()) || u.Status == StatusBanned {
 		return errs.New(errs.CodeAuthAccountBanned, "The account has been banned")
@@ -229,9 +223,4 @@ func (u *User) GuardState() error {
 		return errs.Forbidden("The account is not active")
 	}
 	return nil
-}
-
-// GuardUserState 校验指定用户的封禁与活跃状态函数。
-func GuardUserState(user *User) error {
-	return user.GuardState()
 }

@@ -13,7 +13,7 @@ func New(
 	mediaCfg config.MediaConfig,
 	storageCfg config.StorageConfig,
 	disk storage.Disk,
-	db *bun.DB,
+	db bun.IDB,
 ) *Manager {
 	imgClient := NewWithStorage(mediaCfg.Imgproxy, storageCfg)
 

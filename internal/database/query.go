@@ -1,33 +1,10 @@
 package database
 
 import (
-	"context"
 	"strings"
 
 	"github.com/uptrace/bun"
-
-	"bfiber/internal/platform/response"
 )
-
-// QueryApplier 描述能够直接应用过滤、排序与分页规格的查询构建对象。
-type QueryApplier interface {
-	Apply(q *bun.SelectQuery) *bun.SelectQuery
-	Pagination() Pagination
-}
-
-// Paginate 执行具备规格化过滤、排序、分页与总数统计的通用查询，并返回统一的分页元数据。
-func Paginate[T any](ctx context.Context, db bun.IDB, applier QueryApplier) ([]T, response.Meta, error) {
-	page, pageSize := applier.Pagination().Normalise()
-	// 显式初始化为非 nil 空切片，确保在无命中记录时 JSON 序列化为 `[]` 而非 `null`，避免前端消费空指针。
-	items := make([]T, 0)
-
-	q := ResolveDB(ctx, db).NewSelect().Model(&items)
-	total, err := applier.Apply(q).ScanAndCount(ctx)
-	if err != nil {
-		return nil, response.Meta{}, err
-	}
-	return items, response.NewMeta(page, pageSize, int(total)), nil
-}
 
 // Pagination 封装基于偏移量的安全分页参数与区间校验。
 type Pagination struct {
@@ -79,6 +56,51 @@ func (p Pagination) Limit() int {
 // Apply 为 Bun 查询附加 LIMIT 与 OFFSET 分页子句。
 func (p Pagination) Apply(q *bun.SelectQuery) *bun.SelectQuery {
 	return q.Offset(int64(p.Offset())).Limit(int64(p.Limit()))
+}
+
+// Window 描述按偏移量推进的分块窗口，用于流式导出等非请求分页场景的游标。
+//
+// 与 Pagination 的区别是语义而非形状：Pagination 表达"第几页"（受 MaxPageSize 约束，
+// 面向调用方能传入的请求参数），Window 表达"从第几条起取多少条"（条数由导出器自选的
+// 分块大小决定，允许大于 MaxPageSize）。把两者混用会把页面上限错误地施加到导出分块上。
+//
+// 约定：把窗口交给取数方之前先 Normalise，并以同一份结果做断流判断——
+// 取数方会再次归一，两边若用了不同的 Limit 会把"取满一批"误判成"已取完"。
+type Window struct {
+	Offset int
+	Limit  int
+}
+
+// MaxWindowSize 是分块条数的安全上限：它不是页面上限的复用，而是防止调用方传入
+// 病态窗口（一次拉取百万行）导致内存放大。默认导出分块 500 远低于此值。
+const MaxWindowSize = 10_000
+
+// Normalise 返回收敛后的窗口：偏移非负，条数至少为 1。
+// 未指定（<=0）时回落到 DefaultPageSize，超过安全上限时压到 MaxWindowSize。
+// 下限刻意取 1 而不是 DefaultPageSize：分块条数由取数方自选，小分块是合法用法，
+// 按下限抬高会把"每批 10 行"的请求悄悄变成每批 20 行。
+func (w Window) Normalise() Window {
+	limit := w.Limit
+	switch {
+	case limit <= 0:
+		limit = DefaultPageSize
+	case limit > MaxWindowSize:
+		limit = MaxWindowSize
+	}
+	return Window{Offset: max(w.Offset, 0), Limit: limit}
+}
+
+// Apply 为 Bun 查询附加窗口的 LIMIT 与 OFFSET 子句。
+func (w Window) Apply(q *bun.SelectQuery) *bun.SelectQuery {
+	normalised := w.Normalise()
+	return q.Offset(int64(normalised.Offset)).Limit(int64(normalised.Limit))
+}
+
+// Next 返回顺次推进一个窗口后的下一个窗口。
+func (w Window) Next() Window {
+	normalised := w.Normalise()
+	normalised.Offset += normalised.Limit
+	return normalised
 }
 
 // Sorter 封装排序字段白名单与方向解析，杜绝 SQL 注入。

@@ -18,34 +18,19 @@ import (
 var (
 	_ authentication.UserProvider[*User] = (*UserProvider)(nil)
 	_ authentication.LoginRecorder       = (*UserProvider)(nil)
+	_ authentication.CredentialStore     = (*UserProvider)(nil)
 )
 
 // UserProvider 实现了 authentication.UserProvider[*User] 与 authentication.LoginRecorder，
 // 负责作为 Guard 的用户获取与凭据核验适配器。
 type UserProvider struct {
-	db     *bun.DB
+	db     bun.IDB
 	hasher *hasher.Hasher
 }
 
 // NewUserProvider 构造 UserProvider 实例。
-func NewUserProvider(db *bun.DB, h *hasher.Hasher) *UserProvider {
+func NewUserProvider(db bun.IDB, h *hasher.Hasher) *UserProvider {
 	return &UserProvider{db: db, hasher: h}
-}
-
-// WithHasher 链式注入或覆盖 Hasher。
-func (p *UserProvider) WithHasher(h *hasher.Hasher) *UserProvider {
-	p.hasher = h
-	return p
-}
-
-// DB 返回底层数据库句柄。
-func (p *UserProvider) DB() *bun.DB {
-	return p.db
-}
-
-// Hasher 返回底层密码哈希器。
-func (p *UserProvider) Hasher() *hasher.Hasher {
-	return p.hasher
 }
 
 // FindByID 按主键查找用户主体。
@@ -95,12 +80,12 @@ func (p *UserProvider) RecordLogin(ctx context.Context, id string, method string
 	return RecordLogin(ctx, p.db, id, method)
 }
 
-// FindCredentialAccount 查找指定用户的本地凭据账户。
-func (p *UserProvider) FindCredentialAccount(ctx context.Context, userID string) (*Account, error) {
-	return FindCredentialAccount(ctx, p.db, userID)
+// FindCredentialPassword 返回指定用户的本地密码哈希；凭据不存在时返回 sql.ErrNoRows。
+func (p *UserProvider) FindCredentialPassword(ctx context.Context, userID string) (*string, error) {
+	return FindCredentialPassword(ctx, p.db, userID)
 }
 
-// UpdatePassword 更新指定用户的本地凭据密码哈希。
+// UpdatePassword 更新指定用户的本地凭据密码哈希；凭据不存在时返回 sql.ErrNoRows。
 func (p *UserProvider) UpdatePassword(ctx context.Context, userID, passwordHash string) error {
 	return UpdatePassword(ctx, p.db, userID, passwordHash)
 }
@@ -122,7 +107,7 @@ type AdminPolicy struct{}
 // ValidateUser 校验管理员账号具备系统管理员角色且处于活跃可用状态。
 func (p AdminPolicy) ValidateUser(ctx context.Context, user *User) error {
 	if user == nil {
-		return errs.Unauthorized(errs.CodeAuthTokenInvalid, "The token is invalid")
+		return errs.TokenInvalid()
 	}
 	if id, ok := authentication.FromContext(ctx); ok {
 		roles := id.AllRoles()

@@ -16,6 +16,7 @@ type {{ .PascalName }} struct {
 	bun.BaseModel `bun:"table:{{ .TableName }},alias:{{ .TableAlias }}"`
 
 	database.Base
+	database.SoftDeletes
 
 	// 业务名称
 	Name string `bun:"name,notnull"`
@@ -25,9 +26,9 @@ type {{ .PascalName }} struct {
 	Status string `bun:"status,notnull,default:'active'"`
 }
 
-// Active{{ .PluralPascal }}Query 返回已排除软删除记录的基础查询。
+// Active{{ .PluralPascal }}Query 返回基础查询；软删除记录由 Bun 依据 soft_delete 标签自动排除。
 func Active{{ .PluralPascal }}Query(db bun.IDB) *bun.SelectQuery {
-	return db.NewSelect().Model((*{{ .PascalName }})(nil)).Where("{{ .TableAlias }}.deleted_at IS NULL")
+	return db.NewSelect().Model((*{{ .PascalName }})(nil))
 }
 
 // Find{{ .PascalName }}ByID 按主键查询记录（优先从上下文感知活跃事务）。
@@ -40,36 +41,30 @@ func Find{{ .PascalName }}ByID(ctx context.Context, db bun.IDB, id string) (*{{ 
 	return entity, nil
 }
 
-// List{{ .PluralPascal }} 按条件分页查询记录（优先从上下文感知活跃事务）。
-func List{{ .PluralPascal }}(ctx context.Context, db bun.IDB, search, status string, offset, limit int) ([]{{ .PascalName }}, error) {
-	actualDB := database.ResolveDB(ctx, db)
-	items := make([]{{ .PascalName }}, 0, limit)
-	q := Active{{ .PluralPascal }}Query(actualDB)
+// List{{ .PluralPascal }}AndCount 按条件分页查询记录并返回总数（优先从上下文感知活跃事务）。
+// 取页与计数由 ScanAndCount 在同一规格上一次完成：Bun 会把 ORDER BY 与 LIMIT/OFFSET 从计数查询中剔除，
+// 因此 total 是全量计数而非页内计数；过滤条件只此一处，不会出现列表与计数两份会漂移的谓词。
+func List{{ .PluralPascal }}AndCount(
+	ctx context.Context,
+	db bun.IDB,
+	search, status string,
+	pagination database.Pagination,
+) ([]{{ .PascalName }}, int, error) {
+	items := make([]{{ .PascalName }}, 0)
+	q := database.ResolveDB(ctx, db).NewSelect().Model(&items)
 	if status != "" {
 		q = q.Where("{{ .TableAlias }}.status = ?", status)
 	}
 	if search != "" {
-		pattern := "%" + strings.TrimSpace(search) + "%"
+		pattern := "%" + database.EscapeLike(strings.TrimSpace(search)) + "%"
 		q = q.Where("{{ .TableAlias }}.name ILIKE ?", pattern)
 	}
-	if err := q.Order("{{ .TableAlias }}.created_at DESC").Offset(offset).Limit(limit).Scan(ctx, &items); err != nil {
-		return nil, err
-	}
-	return items, nil
-}
 
-// Count{{ .PluralPascal }} 统计满足条件的记录条数（优先从上下文感知活跃事务）。
-func Count{{ .PluralPascal }}(ctx context.Context, db bun.IDB, search, status string) (int, error) {
-	actualDB := database.ResolveDB(ctx, db)
-	q := Active{{ .PluralPascal }}Query(actualDB)
-	if status != "" {
-		q = q.Where("{{ .TableAlias }}.status = ?", status)
+	total, err := pagination.Apply(q.Order("{{ .TableAlias }}.created_at DESC")).ScanAndCount(ctx)
+	if err != nil {
+		return nil, 0, err
 	}
-	if search != "" {
-		pattern := "%" + strings.TrimSpace(search) + "%"
-		q = q.Where("{{ .TableAlias }}.name ILIKE ?", pattern)
-	}
-	return q.Count(ctx)
+	return items, int(total), nil
 }
 
 // Insert 将实体插入数据库（自动透传上下文活跃事务）。
@@ -88,7 +83,7 @@ func (m *{{ .PascalName }}) Update(ctx context.Context, db bun.IDB, columns ...s
 	return err
 }
 
-// SoftDelete 软删除当前记录（自动透传上下文活跃事务）。
+// SoftDelete 软删除当前记录（自动透传上下文活跃事务；未删除谓词由 Bun 自动附加）。
 func (m *{{ .PascalName }}) SoftDelete(ctx context.Context, db bun.IDB) error {
 	now := time.Now().UTC()
 	res, err := database.ResolveDB(ctx, db).NewUpdate().
@@ -96,7 +91,6 @@ func (m *{{ .PascalName }}) SoftDelete(ctx context.Context, db bun.IDB) error {
 		Set("deleted_at = ?", now).
 		Set("updated_at = ?", now).
 		Where("id = ?", m.ID).
-		Where("deleted_at IS NULL").
 		Exec(ctx)
 	if err != nil {
 		return err

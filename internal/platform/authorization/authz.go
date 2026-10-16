@@ -111,7 +111,7 @@ func (e *Enforcer) newContribMiddleware(lookup func(fiber.Ctx) string) *contribc
 		Enforcer: e.enforcer,
 		Lookup:   lookup,
 		Unauthorized: func(c fiber.Ctx) error {
-			return errs.Render(c, errs.Unauthorized(errs.CodeAuthTokenInvalid, "Authentication is required"))
+			return errs.Render(c, errs.AuthenticationRequired())
 		},
 		Forbidden: func(c fiber.Ctx) error {
 			return errs.Render(c, errs.Forbidden("You are not allowed to perform this action"))
@@ -125,7 +125,7 @@ func (e *Enforcer) RequirePermission(resource, action string) fiber.Handler {
 	return func(c fiber.Ctx) error {
 		id, ok := authentication.FromContext(c.Context())
 		if !ok || id.UserID == "" {
-			return errs.Unauthorized(errs.CodeAuthTokenInvalid, "Authentication is required")
+			return errs.AuthenticationRequired()
 		}
 
 		roles := id.AllRoles()

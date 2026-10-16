@@ -351,12 +351,8 @@ func TestPackageHelperFunctions(t *testing.T) {
 	require.NotNil(t, gw)
 	assert.Equal(t, reg, gw.Registry())
 
-	mgr, err := realtime.RegisterRealtime(cfg)
+	// cfg 为空时退化为无注册表的管理器，不得 panic。
+	fallbackGateway, err := realtime.RegisterRealtimeGateway(nil, reg)
 	require.NoError(t, err)
-	require.NotNil(t, mgr)
-
-	// 未启用时 RegisterRealtime 报错
-	disabledCfg := &config.Config{}
-	_, err = realtime.RegisterRealtime(disabledCfg)
-	require.ErrorIs(t, err, realtime.ErrRealtimeDisabled)
+	assert.NotNil(t, fallbackGateway)
 }

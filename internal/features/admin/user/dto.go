@@ -5,7 +5,6 @@ import (
 	"time"
 
 	"github.com/aarondl/opt/omitnull"
-	"github.com/uptrace/bun"
 
 	"bfiber/internal/database"
 	"bfiber/internal/database/models"
@@ -33,7 +32,7 @@ type Status = enums.Status
 // UserPathParams 是用户唯一标识的路径参数。
 type UserPathParams struct {
 	// 用户唯一标识
-	ID string `uri:"id" json:"id" example:"usr_01J9X4N8Y0ABCD" validate:"required"`
+	ID string `uri:"id" json:"id" example:"019572d4-a6c8-78b1-8cf0-281b94c032a1" validate:"required"`
 }
 
 // --- 请求体 Body ---
@@ -214,34 +213,12 @@ type ListUsersQueryParams struct {
 	Role Role `form:"role" json:"role" query:"role" example:"user" enums:"user,admin" validate:"omitempty,oneof=user admin"`
 }
 
-// UserSorter 是后台用户列表排序解析器。
-var UserSorter = database.Sorter{
-	Allowed: models.UserSortColumns,
-	Default: "u.created_at DESC",
-}
-
 // Pagination 返回标准化分页结构体。
 func (r ListUsersQueryParams) Pagination() database.Pagination {
 	return database.Pagination{
 		Page:     r.Page,
 		PageSize: r.PageSize,
 	}
-}
-
-// Apply 将查询参数与过滤条件直接应用到 Bun 查询。
-func (r ListUsersQueryParams) Apply(q *bun.SelectQuery) *bun.SelectQuery {
-	if r.Status != "" {
-		q = q.Where("u.status = ?", r.Status)
-	}
-	if r.Role != "" {
-		q = q.Where("u.role = ?", r.Role)
-	}
-	if trimmed := strings.TrimSpace(r.Search); trimmed != "" {
-		pattern := "%" + database.EscapeLike(trimmed) + "%"
-		q = q.Where("(u.name ILIKE ? OR u.email ILIKE ? OR u.username ILIKE ?)", pattern, pattern, pattern)
-	}
-	q = UserSorter.Apply(q, r.Sort)
-	return r.Pagination().Apply(q)
 }
 
 // Validate 校验排序参数，要求每个逗号分隔的字段均在 models.UserSortColumns 白名单中。
@@ -267,13 +244,14 @@ func (r ListUsersQueryParams) Validate() error {
 	return nil
 }
 
-// ToFilter 将 HTTP 查询参数投影为底层仓储过滤条件，内聚修剪与排序归一化规则。
-func (r ListUsersQueryParams) ToFilter() models.UserListFilter {
-	return models.UserListFilter{
-		Search: strings.TrimSpace(r.Search),
-		Status: enums.Status(strings.TrimSpace(string(r.Status))),
-		Role:   enums.Role(strings.TrimSpace(string(r.Role))),
-		Sort:   models.NormaliseUserSort(r.Sort),
+// ToQuery 把查询参数投影为底层用户查询规格；过滤、排序与分页规则内聚于 models.UserQuery。
+func (r ListUsersQueryParams) ToQuery() models.UserQuery {
+	return models.UserQuery{
+		Search:     strings.TrimSpace(r.Search),
+		Status:     enums.Status(strings.TrimSpace(string(r.Status))),
+		Role:       enums.Role(strings.TrimSpace(string(r.Role))),
+		Sort:       r.Sort,
+		Pagination: r.Pagination(),
 	}
 }
 
@@ -282,7 +260,7 @@ func (r ListUsersQueryParams) ToFilter() models.UserListFilter {
 // UserResource 是管理端视角的系统用户视图模型。
 type UserResource struct {
 	// 用户唯一标识
-	ID string `json:"id" example:"usr_01J9X4N8Y0ABCD"`
+	ID string `json:"id" example:"019572d4-a6c8-78b1-8cf0-281b94c032a1"`
 	// 用户展示昵称
 	Name string `json:"name" example:"Alex Mercer"`
 	// 用户电子邮箱

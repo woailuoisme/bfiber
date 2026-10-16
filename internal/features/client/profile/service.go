@@ -2,8 +2,6 @@ package profile
 
 import (
 	"context"
-	"database/sql"
-	"errors"
 	"mime/multipart"
 
 	"github.com/uptrace/bun"
@@ -32,29 +30,16 @@ func NewService(db bun.IDB, media *media.Manager) *Service {
 func (s *Service) GetProfile(ctx context.Context, userID string) (ProfileResource, error) {
 	entity, err := models.FindUserByID(ctx, s.db, userID)
 	if err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			return ProfileResource{}, errs.NotFound("The requested user does not exist")
-		}
-		return ProfileResource{}, errs.Internal(err)
+		return ProfileResource{}, errs.From(err, errs.UserNotFound())
 	}
 	return toProfileResource(entity), nil
 }
 
 // UpdateProfile 执行本人档案的局部更新并做用户名防重。
 func (s *Service) UpdateProfile(ctx context.Context, userID string, body UpdateProfileBody) (ProfileResource, error) {
-	fields := body.ToFields()
-	if username, ok := fields["username"].(string); ok && username != "" {
-		if err := models.CheckUsernameAvailable(ctx, s.db, userID, username); err != nil {
-			return ProfileResource{}, err
-		}
-	}
-
-	updated, err := models.UpdateUserFields(ctx, s.db, userID, fields)
+	updated, err := models.ApplyUserPatch(ctx, s.db, userID, body.ToFields())
 	if err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			return ProfileResource{}, errs.NotFound("The requested user does not exist")
-		}
-		return ProfileResource{}, models.MapUserUniqueConflict(err)
+		return ProfileResource{}, err
 	}
 	return toProfileResource(updated), nil
 }
@@ -76,8 +61,8 @@ func (s *Service) UploadAvatar(ctx context.Context, userID string, file *multipa
 		return nil
 	})
 	if err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			return ProfileResource{}, errs.NotFound("The requested user does not exist")
+		if errs.IsNoRows(err) {
+			return ProfileResource{}, errs.UserNotFound()
 		}
 		return ProfileResource{}, err
 	}

@@ -182,7 +182,7 @@ func CurrentUserID(ctx context.Context) string {
 func UserID(ctx context.Context) (string, error) {
 	id, ok := FromContext(ctx)
 	if !ok || id.UserID == "" {
-		return "", errs.Unauthorized(errs.CodeAuthTokenInvalid, "Authentication is required")
+		return "", errs.AuthenticationRequired()
 	}
 	return id.UserID, nil
 }
@@ -192,7 +192,7 @@ func UserID(ctx context.Context) (string, error) {
 func RequireIdentity(ctx context.Context) (Identity, error) {
 	id, ok := FromContext(ctx)
 	if !ok || id.UserID == "" {
-		return Identity{}, errs.Unauthorized(errs.CodeAuthTokenInvalid, "Authentication is required")
+		return Identity{}, errs.AuthenticationRequired()
 	}
 	return id, nil
 }

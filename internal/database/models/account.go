@@ -30,8 +30,6 @@ type Account struct {
 	AccessTokenExpiresAt  *time.Time `bun:"access_token_expires_at"`
 	RefreshTokenExpiresAt *time.Time `bun:"refresh_token_expires_at"`
 	Scope                 *string    `bun:"scope"`
-
-	User *User `bun:"rel:belongs-to,join:user_id=id"`
 }
 
 var _ database.Model = (*Account)(nil)

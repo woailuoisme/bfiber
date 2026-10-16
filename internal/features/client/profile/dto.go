@@ -15,7 +15,7 @@ import (
 // ProfileResource 是客户端个人资料响应视图。
 type ProfileResource struct {
 	// 用户唯一标识
-	ID string `json:"id" example:"usr_01J9X4N8Y0ABCD"`
+	ID string `json:"id" example:"019572d4-a6c8-78b1-8cf0-281b94c032a1"`
 	// 用户展示昵称
 	Name string `json:"name" example:"Alex Mercer"`
 	// 用户电子邮箱

@@ -158,3 +158,56 @@ func TestPaginationAndSorter_Apply(t *testing.T) {
 	assert.Contains(t, sql, "ORDER BY")
 	assert.Contains(t, sql, "name\" DESC")
 }
+
+// TestWindow 校验分块窗口的归一化与推进语义。
+// Window 与 Pagination 的分界就在这里：导出分块 500 不得被页面上限（MaxPageSize=100）截断，
+// 但病态大条数必须被安全上限拦住。
+func TestWindow(t *testing.T) {
+	t.Parallel()
+
+	t.Run("Normalise 收敛偏移与条数", func(t *testing.T) {
+		t.Parallel()
+
+		tests := []struct {
+			name string
+			in   database.Window
+			want database.Window
+		}{
+			{"合法窗口原样保留", database.Window{Offset: 500, Limit: 500}, database.Window{Offset: 500, Limit: 500}},
+			{"负偏移收敛到 0", database.Window{Offset: -5, Limit: 10}, database.Window{Offset: 0, Limit: 10}},
+			{"小分块不被放大", database.Window{Offset: 0, Limit: 1}, database.Window{Offset: 0, Limit: 1}},
+			{"零条数回落到默认每页", database.Window{Offset: 0, Limit: 0}, database.Window{Offset: 0, Limit: database.DefaultPageSize}},
+			{"负条数回落到默认每页", database.Window{Offset: 7, Limit: -3}, database.Window{Offset: 7, Limit: database.DefaultPageSize}},
+			{"病态大条数收敛到安全上限", database.Window{Offset: 0, Limit: 1_000_000}, database.Window{Offset: 0, Limit: database.MaxWindowSize}},
+			{"导出分块不受页面上限约束", database.Window{Offset: 0, Limit: 500}, database.Window{Offset: 0, Limit: 500}},
+		}
+
+		for _, tt := range tests {
+			t.Run(tt.name, func(t *testing.T) {
+				t.Parallel()
+				assert.Equal(t, tt.want, tt.in.Normalise())
+			})
+		}
+	})
+
+	t.Run("Next 按归一后的条数推进", func(t *testing.T) {
+		t.Parallel()
+
+		assert.Equal(t, database.Window{Offset: 1_000, Limit: 500},
+			database.Window{Offset: 500, Limit: 500}.Next())
+
+		// 未归一的窗口先推进也不得倒退：偏移按归一后的条数前进。
+		assert.Equal(t, database.Window{Offset: database.DefaultPageSize, Limit: database.DefaultPageSize},
+			database.Window{Offset: 0, Limit: -1}.Next())
+	})
+
+	t.Run("Apply 写入 LIMIT 与 OFFSET 子句", func(t *testing.T) {
+		t.Parallel()
+
+		db := bun.NewDB(nil, pgdialect.New())
+		sql := database.Window{Offset: 500, Limit: 500}.Apply(db.NewSelect().TableExpr("users AS u")).String()
+
+		assert.Contains(t, sql, "LIMIT 500")
+		assert.Contains(t, sql, "OFFSET 500")
+	})
+}

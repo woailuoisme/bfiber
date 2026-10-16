@@ -16,14 +16,12 @@ import (
 	"go.opentelemetry.io/otel/exporters/otlp/otlplog/otlploggrpc"
 	"go.opentelemetry.io/otel/exporters/otlp/otlpmetric/otlpmetricgrpc"
 	"go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracegrpc"
-	"go.opentelemetry.io/otel/metric"
 	"go.opentelemetry.io/otel/propagation"
 	sdklog "go.opentelemetry.io/otel/sdk/log"
 	sdkmetric "go.opentelemetry.io/otel/sdk/metric"
 	"go.opentelemetry.io/otel/sdk/resource"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 	semconv "go.opentelemetry.io/otel/semconv/v1.26.0"
-	"go.opentelemetry.io/otel/trace"
 	"go.uber.org/zap/zapcore"
 
 	"bfiber/internal/config"
@@ -189,16 +187,6 @@ func IsInitialized() bool {
 	mu.RLock()
 	defer mu.RUnlock()
 	return initialized
-}
-
-// Tracer 返回指定命名空间的全局 Tracer。若未就绪，返回默认 Noop/全局兜底 Tracer。
-func Tracer(name string) trace.Tracer {
-	return otel.GetTracerProvider().Tracer(name)
-}
-
-// Meter 返回指定命名空间的全局 Meter。若未就绪，返回默认 Noop/全局兜底 Meter。
-func Meter(name string) metric.Meter {
-	return otel.GetMeterProvider().Meter(name)
 }
 
 // Shutdown 优雅停机并冲刷所有待发送的链路追踪、指标度量与日志批处理缓冲区。

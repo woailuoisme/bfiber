@@ -10,7 +10,10 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"github.com/uptrace/bun"
+	"github.com/uptrace/bun/dialect/pgdialect"
 
+	"bfiber/internal/database"
 	"bfiber/internal/database/models"
 	admin "bfiber/internal/features/admin/user"
 )
@@ -23,55 +26,59 @@ const (
 	wantMaxPage         = 1_000_000
 )
 
-// TestNormaliseSortUsesWhitelist 校验排序只认白名单字段，注入尝试被丢弃。
-func TestNormaliseSortUsesWhitelist(t *testing.T) {
+// TestUserQuerySortUsesWhitelist 校验排序只认白名单字段，注入尝试被丢弃。
+// 排序解析已内聚到 models.UserQuery，因此经由其 SQL 输出验证行为。
+func TestUserQuerySortUsesWhitelist(t *testing.T) {
+	db := bun.NewDB(nil, pgdialect.New())
+
 	tests := []struct {
 		name string
 		raw  string
-		want []string
+		want string
 	}{
-		{"缺省退回稳定排序", "", []string{"u.created_at DESC"}},
-		{"升序", "email", []string{"u.email ASC"}},
-		{"降序", "-name", []string{"u.name DESC"}},
-		{"复合排序", "createdAt,-email", []string{"u.created_at ASC", "u.email DESC"}},
-		{"注入尝试被丢弃", `id; DROP TABLE "user"`, []string{"u.created_at DESC"}},
-		{"未知字段与空白被剥掉", " unknown , email ,", []string{"u.email ASC"}},
-		{"不在白名单的列被忽略", "u.password", []string{"u.created_at DESC"}},
+		{"缺省退回稳定排序", "", `ORDER BY "u"."created_at" DESC`},
+		{"升序", "email", `ORDER BY "u"."email" ASC`},
+		{"降序", "-name", `ORDER BY "u"."name" DESC`},
+		{"复合排序", "createdAt,-email", `ORDER BY "u"."created_at" ASC, "u"."email" DESC`},
+		{"注入尝试被丢弃", `id; DROP TABLE "user"`, `ORDER BY "u"."created_at" DESC`},
+		{"未知字段与空白被剥掉", " unknown , email ,", `ORDER BY "u"."email" ASC`},
+		{"不在白名单的列被忽略", "u.password", `ORDER BY "u"."created_at" DESC`},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			assert.Equal(t, tt.want, models.NormaliseUserSort(tt.raw))
+			q := models.UserQuery{Sort: tt.raw}
+			sql := q.Apply(db.NewSelect().Model((*models.User)(nil))).String()
+			assert.Contains(t, sql, tt.want)
 		})
 	}
 }
 
-// TestPaginationContract 校验 api.md 6.1 的分页契约（默认值、上限与越界收敛）由服务层真实承载。
+// TestPaginationContract 校验 api.md 6.1 的分页契约（默认值、上限与越界收敛）由查询规格真实承载。
 func TestPaginationContract(t *testing.T) {
-	// 省略全部字段：收敛到默认值。
-	page, pageSize := admin.NormalisePagination(0, 0)
-	assert.Equal(t, wantDefaultPage, page)
-	assert.Equal(t, wantDefaultPageSize, pageSize)
-
 	// 越界取值：page 抬到下限，pageSize 压到上限。
-	page, pageSize = admin.NormalisePagination(-5, 1000)
+	page, pageSize := (database.Pagination{Page: -5, PageSize: 1000}).Normalise()
 	assert.Equal(t, wantDefaultPage, page)
 	assert.Equal(t, wantMaxPageSize, pageSize)
 
 	// 超大页码必须收敛，否则 (page-1)*pageSize 会溢出为负值。
-	page, _ = admin.NormalisePagination(math.MaxInt64, wantDefaultPageSize)
+	page, _ = (database.Pagination{Page: math.MaxInt64, PageSize: wantDefaultPageSize}).Normalise()
 	assert.Equal(t, wantMaxPage, page)
 
 	// 正常取值原样透传。
-	page, pageSize = admin.NormalisePagination(3, 50)
+	page, pageSize = (database.Pagination{Page: 3, PageSize: 50}).Normalise()
 	assert.Equal(t, 3, page)
 	assert.Equal(t, 50, pageSize)
 
-	// 请求结构体允许省略分页字段，交由服务层收敛。
+	// 请求结构体允许省略分页字段，经 ToQuery 投影后由规格收敛到默认值。
 	var query admin.ListUsersQueryParams
 	require.NoError(t, json.Unmarshal([]byte(`{}`), &query))
 	assert.Zero(t, query.Page)
 	assert.Zero(t, query.PageSize)
+
+	page, pageSize = query.ToQuery().Pagination.Normalise()
+	assert.Equal(t, wantDefaultPage, page)
+	assert.Equal(t, wantDefaultPageSize, pageSize)
 }
 
 // TestListUsersQueryAcceptsCompoundSort 校验查询参数结构体允许复合排序表达式。
@@ -79,7 +86,7 @@ func TestListUsersQueryAcceptsCompoundSort(t *testing.T) {
 	var query admin.ListUsersQueryParams
 	require.NoError(t, json.Unmarshal([]byte(`{"sort":"-createdAt,email"}`), &query))
 	assert.Equal(t, "-createdAt,email", query.Sort)
-	assert.Equal(t, []string{"u.created_at DESC", "u.email ASC"}, models.NormaliseUserSort(query.Sort))
+	assert.Equal(t, "-createdAt,email", query.ToQuery().Sort)
 }
 
 // TestUpdateUserRequest 校验 UpdateUserRequest 对 UserPathParams 与 UpdateUserBody 的聚合契约。

@@ -21,7 +21,6 @@ import (
 	"bfiber/internal/config"
 	"bfiber/internal/middleware"
 	"bfiber/internal/platform/authentication"
-	"bfiber/internal/platform/cache"
 	"bfiber/internal/platform/errs"
 )
 
@@ -509,28 +508,4 @@ func TestThrottle_DisabledGlobally(t *testing.T) {
 		assert.Equal(t, fiber.StatusOK, resp.StatusCode, "request %d should succeed", i+1)
 		assert.Empty(t, resp.Header.Get("X-RateLimit-Limit"), "headers should not be set when rate limit is disabled")
 	}
-}
-
-// TestThrottleWithStorage 验证强类型 fiber.Storage 构造器限流行为正常。
-func TestThrottleWithStorage(t *testing.T) {
-	storage := cache.NewMemoryStorage()
-	app := fiber.New(fiber.Config{
-		ErrorHandler: middleware.New(middleware.Deps{}).ErrorHandler(),
-	})
-	app.Get("/typed-rate", middleware.ThrottleWithStorage(storage, 2, time.Minute), func(c fiber.Ctx) error {
-		return c.JSON(fiber.Map{"status": "ok"})
-	})
-
-	for i := range 2 {
-		req := httptest.NewRequest(http.MethodGet, "/typed-rate", nil)
-		resp, err := app.Test(req, fiber.TestConfig{Timeout: 0})
-		require.NoError(t, err)
-		assert.Equal(t, fiber.StatusOK, resp.StatusCode, "request %d should succeed", i+1)
-	}
-
-	// 第 3 次请求应被拦截
-	req3 := httptest.NewRequest(http.MethodGet, "/typed-rate", nil)
-	resp3, err := app.Test(req3, fiber.TestConfig{Timeout: 0})
-	require.NoError(t, err)
-	assert.Equal(t, fiber.StatusTooManyRequests, resp3.StatusCode)
 }

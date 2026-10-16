@@ -451,7 +451,7 @@
                 "parameters": [
                     {
                         "type": "string",
-                        "example": "\"usr_01J9X4N8Y0ABCD\"",
+                        "example": "\"019572d4-a6c8-78b1-8cf0-281b94c032a1\"",
                         "description": "用户唯一标识",
                         "name": "id",
                         "in": "path",
@@ -474,7 +474,7 @@
                         "BearerAuth": []
                     }
                 ],
-                "description": "物理删除指定用户及其关联账号数据，并级联清理权限策略。",
+                "description": "软删除指定用户：仅写入删除时间并保留记录，账号数据与权限策略不做级联清理；被删用户不再出现在业务查询中，其邮箱可被重新注册。",
                 "consumes": [
                     "application/json"
                 ],
@@ -488,7 +488,7 @@
                 "parameters": [
                     {
                         "type": "string",
-                        "example": "\"usr_01J9X4N8Y0ABCD\"",
+                        "example": "\"019572d4-a6c8-78b1-8cf0-281b94c032a1\"",
                         "description": "用户唯一标识",
                         "name": "id",
                         "in": "path",
@@ -522,7 +522,7 @@
                 "parameters": [
                     {
                         "type": "string",
-                        "example": "\"usr_01J9X4N8Y0ABCD\"",
+                        "example": "\"019572d4-a6c8-78b1-8cf0-281b94c032a1\"",
                         "description": "用户唯一标识",
                         "name": "id",
                         "in": "path",
@@ -795,7 +795,7 @@
                 "id": {
                     "description": "用户唯一标识",
                     "type": "string",
-                    "example": "usr_01J9X4N8Y0ABCD"
+                    "example": "019572d4-a6c8-78b1-8cf0-281b94c032a1"
                 },
                 "image": {
                     "description": "用户头像 URL",
@@ -921,7 +921,7 @@
                 "id": {
                     "description": "用户唯一标识",
                     "type": "string",
-                    "example": "usr_01J9X4N8Y0ABCD"
+                    "example": "019572d4-a6c8-78b1-8cf0-281b94c032a1"
                 },
                 "image": {
                     "description": "用户头像 URL",

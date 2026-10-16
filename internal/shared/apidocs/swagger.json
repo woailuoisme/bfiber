@@ -874,7 +874,7 @@
                 "id": {
                     "description": "用户唯一标识",
                     "type": "string",
-                    "example": "usr_01J9X4N8Y0ABCD"
+                    "example": "019572d4-a6c8-78b1-8cf0-281b94c032a1"
                 },
                 "image": {
                     "description": "用户头像 URL",
@@ -1034,7 +1034,7 @@
                 "id": {
                     "description": "用户唯一标识",
                     "type": "string",
-                    "example": "usr_01J9X4N8Y0ABCD"
+                    "example": "019572d4-a6c8-78b1-8cf0-281b94c032a1"
                 },
                 "image": {
                     "description": "用户头像 URL",

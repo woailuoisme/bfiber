@@ -86,33 +86,7 @@ func TestActiveRecord_Interfaces(t *testing.T) {
 	assert.Equal(t, "ver-789", verModel.GetID())
 }
 
-// TestActiveRecord_UserQueryScopes 验证用户查询作用域与链式构造能力。
-func TestActiveRecord_UserQueryScopes(t *testing.T) {
-	db := bun.NewDB(nil, pgdialect.New())
-
-	t.Run("ActiveUsersQuery contains deleted_at filter", func(t *testing.T) {
-		q := models.ActiveUsersQuery(db)
-		sql := q.String()
-		assert.Contains(t, sql, "deleted_at IS NULL")
-	})
-
-	t.Run("ApplyUserFilter and ApplyUserSort", func(t *testing.T) {
-		filter := models.UserListFilter{
-			Status: enums.StatusActive,
-			Role:   enums.RoleAdmin,
-			Search: "alice",
-			Sort:   []string{"u.email ASC"},
-		}
-		q := models.ActiveUsersQuery(db)
-		q = models.ApplyUserFilter(q, filter)
-		q = models.ApplyUserSort(q, filter.Sort)
-		sql := q.String()
-		assert.Contains(t, sql, `status = 'active'`)
-		assert.Contains(t, sql, `role = 'admin'`)
-		assert.Contains(t, sql, `name ILIKE '%alice%'`)
-		assert.Contains(t, sql, `ORDER BY "u"."email" ASC`)
-	})
-}
+// 用户查询的过滤、排序与软删除行为由 tests/database/user_query_test.go 经 UserQuery 规格验证。
 
 // TestActiveRecord_BaseHooks 校验 Base 模型的生命周期钩子与时间戳行为。
 func TestActiveRecord_BaseHooks(t *testing.T) {
@@ -188,41 +162,16 @@ func TestActiveRecord_CarbonHelpers(t *testing.T) {
 		assert.Equal(t, 13, validBase.UpdatedAtCarbon().Hour())
 	})
 
-	t.Run("SoftDeletes methods and DeletedAtCarbon", func(t *testing.T) {
+	t.Run("SoftDeletes 读写软删除时间", func(t *testing.T) {
 		var nilSoft *database.SoftDeletes
 		assert.Nil(t, nilSoft.GetDeletedAt())
 		nilSoft.SetDeletedAt(&now)
-		assert.True(t, nilSoft.DeletedAtCarbon().IsZero())
-
-		zeroSoft := &database.SoftDeletes{}
-		assert.Nil(t, zeroSoft.GetDeletedAt())
-		assert.True(t, zeroSoft.DeletedAtCarbon().IsZero())
-
-		zeroTime := time.Time{}
-		zeroTimeSoft := &database.SoftDeletes{DeletedAt: &zeroTime}
-		assert.True(t, zeroTimeSoft.DeletedAtCarbon().IsZero())
+		assert.Nil(t, nilSoft.GetDeletedAt(), "nil 接收者上的写入必须是空操作")
 
 		validSoft := &database.SoftDeletes{}
+		assert.Nil(t, validSoft.GetDeletedAt())
 		validSoft.SetDeletedAt(&now)
 		assert.Equal(t, &now, validSoft.GetDeletedAt())
-		assert.False(t, validSoft.DeletedAtCarbon().IsZero())
-		assert.Equal(t, 12, validSoft.DeletedAtCarbon().Hour())
-	})
-
-	t.Run("DeletedAtCarbon top-level helper", func(t *testing.T) {
-		assert.True(t, database.DeletedAtCarbon(nil).IsZero())
-
-		user := &models.User{}
-		assert.True(t, database.DeletedAtCarbon(user).IsZero())
-
-		zeroTime := time.Time{}
-		user.SetDeletedAt(&zeroTime)
-		assert.True(t, database.DeletedAtCarbon(user).IsZero())
-
-		user.SetDeletedAt(&now)
-		c := database.DeletedAtCarbon(user)
-		assert.False(t, c.IsZero())
-		assert.Equal(t, 2026, c.Year())
 	})
 }
 
@@ -378,40 +327,5 @@ func TestReconcileBanState(t *testing.T) {
 		models.ReconcileBanState(fields)
 		assert.Equal(t, false, fields["banned"])
 		assert.Equal(t, string(enums.StatusActive), fields["status"])
-	})
-}
-
-// TestUser_AvatarMedia 验证用户头像多态媒体关联提取逻辑。
-func TestUser_AvatarMedia(t *testing.T) {
-	t.Run("nil 用户返回 nil", func(t *testing.T) {
-		var u *models.User
-		assert.Nil(t, u.AvatarMedia())
-	})
-
-	t.Run("无媒体关联时返回 nil", func(t *testing.T) {
-		u := &models.User{}
-		assert.Nil(t, u.AvatarMedia())
-	})
-
-	t.Run("无 avatar 集合媒体时返回 nil", func(t *testing.T) {
-		u := &models.User{
-			Media: []*models.Media{
-				{ID: 1, CollectionName: "document"},
-				{ID: 2, CollectionName: "gallery"},
-			},
-		}
-		assert.Nil(t, u.AvatarMedia())
-	})
-
-	t.Run("存在 avatar 集合媒体时正确返回", func(t *testing.T) {
-		avatar := &models.Media{ID: 10, CollectionName: "avatar", FileName: "avatar.png"}
-		u := &models.User{
-			Media: []*models.Media{
-				{ID: 1, CollectionName: "document"},
-				avatar,
-				{ID: 2, CollectionName: "gallery"},
-			},
-		}
-		assert.Equal(t, avatar, u.AvatarMedia())
 	})
 }

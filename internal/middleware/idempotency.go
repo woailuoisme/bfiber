@@ -91,13 +91,3 @@ func NewIdempotency(storage fiber.Storage, opts ...IdempotencyOption) fiber.Hand
 		return nil
 	}
 }
-
-// IdempotencyWithStore 构造独立的 Fiber 官方幂等中间件实例。
-func IdempotencyWithStore(storage fiber.Storage, opts ...IdempotencyOption) fiber.Handler {
-	return NewIdempotency(storage, opts...)
-}
-
-// IdempotencyWithStorage 构造强类型官方 Storage 的幂等中间件实例。
-func IdempotencyWithStorage(storage fiber.Storage, opts ...IdempotencyOption) fiber.Handler {
-	return NewIdempotency(storage, opts...)
-}

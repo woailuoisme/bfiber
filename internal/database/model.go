@@ -28,13 +28,6 @@ func toCarbon(t time.Time) *carbon.Carbon {
 	return carbon.CreateFromStdTime(t)
 }
 
-func toCarbonPtr(t *time.Time) *carbon.Carbon {
-	if t == nil {
-		return carbon.NewCarbon()
-	}
-	return toCarbon(*t)
-}
-
 // CreatedAtCarbon 返回创建时间的 *carbon.Carbon 包装实例，便于业务层进行链式时间计算与相对时间展示。
 func (b *Base) CreatedAtCarbon() *carbon.Carbon {
 	if b == nil {
@@ -128,14 +121,6 @@ func (s *SoftDeletes) SetDeletedAt(t *time.Time) {
 	}
 }
 
-// DeletedAtCarbon 返回软删除时间的 *carbon.Carbon 包装实例。
-func (s *SoftDeletes) DeletedAtCarbon() *carbon.Carbon {
-	if s == nil {
-		return carbon.NewCarbon()
-	}
-	return toCarbonPtr(s.DeletedAt)
-}
-
 // ============================================================================
 // 2. 核心抽象接口 (Core Interfaces)
 // ============================================================================
@@ -157,19 +142,6 @@ type SoftDeletable interface {
 	Model
 	GetDeletedAt() *time.Time
 	SetDeletedAt(t *time.Time)
-}
-
-// IsTrashed 判断软删除实体当前是否处于被软删除状态。
-func IsTrashed(m SoftDeletable) bool {
-	return m != nil && m.GetDeletedAt() != nil
-}
-
-// DeletedAtCarbon 从任意实现了 SoftDeletable 契约的模型中提取软删除时间的 *carbon.Carbon 包装实例。
-func DeletedAtCarbon(m SoftDeletable) *carbon.Carbon {
-	if m == nil {
-		return carbon.NewCarbon()
-	}
-	return toCarbonPtr(m.GetDeletedAt())
 }
 
 // ============================================================================
@@ -213,10 +185,39 @@ func UnwrapBunDB(idb bun.IDB) *bun.DB {
 	}
 }
 
+// ctxCommitHooksKey 是 context 中存放事务提交后回调的私有键类型。
+type ctxCommitHooksKey struct{}
+
+// commitHooks 承载同一次事务内登记的提交后回调。
+type commitHooks struct {
+	fns []func()
+}
+
+// OnCommit 登记一个仅在本层事务成功提交后执行的回调。
+//
+// 嵌套事务共用最外层事务的提交点：本函数只做登记，真正的执行交给打开事务的那一次
+// RunInTx，因此回调绝不会早于提交执行。当前不在事务中时立即执行——此时不存在事务边界，
+// 立即执行与"提交后"等价。
+//
+// 用途：数据库之外的副作用（如删除被替换的物理文件）无法随事务回滚。若在闭包内直接执行，
+// 外层事务一旦回滚就会留下指向已删文件的悬空记录；登记为提交后回调才是安全的顺序。
+func OnCommit(ctx context.Context, fn func()) {
+	if fn == nil {
+		return
+	}
+	if hooks, ok := ctx.Value(ctxCommitHooksKey{}).(*commitHooks); ok && hooks != nil {
+		hooks.fns = append(hooks.fns, fn)
+		return
+	}
+	fn()
+}
+
 // RunInTx 在事务闭包中执行业务逻辑，自动将活跃事务实例注入上下文 ctx 中。
 // 闭包内部调用的任何 Model、Repository 或 Service 只要传入 ctx，即可通过 database.ResolveDB(ctx, fallback)
 // 透明复用此事务，彻底杜绝显式多层穿透传递 &tx 的样板代码。
 // 若当前上下文已处于事务中，则直接复用当前事务，提供天然幂等安全的事务边界。
+//
+// 经 OnCommit 登记的回调只在真正打开并提交事务的这一层执行；回滚时一律丢弃。
 func RunInTx(ctx context.Context, db bun.IDB, fn func(ctx context.Context) error) error {
 	if active := DBFromContext(ctx); active != nil {
 		return fn(ctx)
@@ -225,7 +226,19 @@ func RunInTx(ctx context.Context, db bun.IDB, fn func(ctx context.Context) error
 	if bunDB == nil {
 		return fn(WithDB(ctx, db))
 	}
-	return bunDB.RunInTx(ctx, nil, func(txCtx context.Context, tx bun.Tx) error {
-		return fn(WithDB(txCtx, &tx))
+
+	hooks := &commitHooks{}
+	err := bunDB.RunInTx(ctx, nil, func(txCtx context.Context, tx bun.Tx) error {
+		return fn(context.WithValue(WithDB(txCtx, &tx), ctxCommitHooksKey{}, hooks))
 	})
+	if err != nil {
+		// 事务已回滚，提交后回调必须作废。
+		return err
+	}
+
+	// 事务已提交，此刻执行数据库之外的副作用才是安全的。
+	for _, hook := range hooks.fns {
+		hook()
+	}
+	return nil
 }

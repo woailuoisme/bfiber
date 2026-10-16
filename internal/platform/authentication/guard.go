@@ -2,7 +2,6 @@ package authentication
 
 import (
 	"context"
-	"database/sql"
 	"errors"
 	"maps"
 	"reflect"
@@ -84,7 +83,7 @@ func (g *Guard[T]) SetUser(ctx context.Context, user T) context.Context {
 func (g *Guard[T]) ID(ctx context.Context) (string, error) {
 	id, ok := FromContext(ctx)
 	if !ok || id.UserID == "" {
-		return "", errs.Unauthorized(errs.CodeAuthTokenInvalid, "Authentication is required")
+		return "", errs.AuthenticationRequired()
 	}
 	return id.UserID, nil
 }
@@ -107,11 +106,7 @@ func (g *Guard[T]) User(ctx context.Context) (T, error) {
 		}
 		user, err := g.provider.FindByID(ctx, cache.identity.UserID)
 		if err != nil {
-			if errors.Is(err, sql.ErrNoRows) {
-				cache.userErr = errs.Unauthorized(errs.CodeAuthTokenInvalid, "The token is invalid")
-				return
-			}
-			cache.userErr = errs.Internal(err)
+			cache.userErr = errs.From(err, errs.TokenInvalid())
 			return
 		}
 		if g.policy != nil {
@@ -140,14 +135,14 @@ func (g *Guard[T]) User(ctx context.Context) (T, error) {
 func (g *Guard[T]) UserOrFail(ctx context.Context) (T, error) {
 	var zero T
 	if !g.Check(ctx) {
-		return zero, errs.Unauthorized(errs.CodeAuthTokenInvalid, "Authentication is required")
+		return zero, errs.AuthenticationRequired()
 	}
 	user, err := g.User(ctx)
 	if err != nil {
 		return zero, err
 	}
 	if isNilOrZero(user) {
-		return zero, errs.Unauthorized(errs.CodeAuthTokenInvalid, "Authentication is required")
+		return zero, errs.AuthenticationRequired()
 	}
 	return user, nil
 }
@@ -178,10 +173,7 @@ func (g *Guard[T]) Validate(ctx context.Context, creds Credentials) (T, error) {
 
 	user, err := g.provider.FindByCredentials(ctx, creds)
 	if err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			return zero, errs.InvalidCredentials()
-		}
-		return zero, errs.Internal(err)
+		return zero, errs.From(err, errs.InvalidCredentials())
 	}
 
 	if g.policy != nil {
@@ -219,10 +211,7 @@ func (g *Guard[T]) OnceUsingID(ctx context.Context, userID string) (context.Cont
 	}
 	user, err := g.provider.FindByID(ctx, userID)
 	if err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			return ctx, zero, errs.NotFound("The requested user does not exist")
-		}
-		return ctx, zero, errs.Internal(err)
+		return ctx, zero, errs.From(err, errs.UserNotFound())
 	}
 	if g.policy != nil {
 		if err := g.policy.ValidateUser(ctx, user); err != nil {
@@ -297,10 +286,7 @@ func (g *Guard[T]) LoginUsingID(ctx context.Context, userID string, opts ...Opti
 	}
 	user, err := g.provider.FindByID(ctx, userID)
 	if err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			return zero, Session{}, errs.NotFound("The requested user does not exist")
-		}
-		return zero, Session{}, errs.Internal(err)
+		return zero, Session{}, errs.From(err, errs.UserNotFound())
 	}
 	sess, err := g.Login(ctx, user, opts...)
 	if err != nil {
@@ -316,10 +302,7 @@ func (g *Guard[T]) TokenByID(ctx context.Context, userID string, opts ...Option)
 	}
 	user, err := g.provider.FindByID(ctx, userID)
 	if err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			return Session{}, errs.NotFound("The requested user does not exist")
-		}
-		return Session{}, errs.Internal(err)
+		return Session{}, errs.From(err, errs.UserNotFound())
 	}
 
 	return g.issueSession(user, opts...)
@@ -373,10 +356,7 @@ func (g *Guard[T]) Refresh(ctx context.Context, refreshToken string, opts ...Opt
 	}
 	user, err := g.provider.FindByID(ctx, claims.Subject)
 	if err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			return zero, Session{}, errs.Unauthorized(errs.CodeAuthTokenInvalid, "The token is invalid")
-		}
-		return zero, Session{}, errs.Internal(err)
+		return zero, Session{}, errs.From(err, errs.TokenInvalid())
 	}
 
 	if g.policy != nil {
@@ -445,7 +425,7 @@ func (g *Guard[T]) AuthenticateClaims(ctx context.Context, claims *Claims) (cont
 			return ctx, nil, err
 		}
 		if isNilOrZero(user) {
-			return ctx, nil, errs.Unauthorized(errs.CodeAuthTokenInvalid, "The token is invalid")
+			return ctx, nil, errs.TokenInvalid()
 		}
 		newCtx = g.SetUser(newCtx, user)
 	}
@@ -467,7 +447,7 @@ func (g *Guard[T]) SetToken(ctx context.Context, rawToken string) (context.Conte
 func (g *Guard[T]) Claims(ctx context.Context) (*Claims, error) {
 	id, ok := FromContext(ctx)
 	if !ok || id.Claims == nil {
-		return nil, errs.Unauthorized(errs.CodeAuthTokenInvalid, "Authentication is required")
+		return nil, errs.AuthenticationRequired()
 	}
 	return id.Claims, nil
 }

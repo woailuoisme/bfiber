@@ -6,7 +6,6 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
-	"strings"
 	"testing"
 
 	"github.com/gofiber/fiber/v3"
@@ -93,61 +92,4 @@ func TestNoContent(t *testing.T) {
 
 	assert.Equal(t, fiber.StatusNoContent, resp.StatusCode)
 	assert.Empty(t, body)
-}
-
-// TestCollection 校验无信封集合序列化时将 nil 切片保持为 [] 而非 null。
-func TestCollection(t *testing.T) {
-	t.Run("nil 切片序列化为 []", func(t *testing.T) {
-		resp, body := run(func(c fiber.Ctx) error {
-			return response.Collection[string](c, nil)
-		})
-
-		assert.Equal(t, fiber.StatusOK, resp.StatusCode)
-		assert.JSONEq(t, `[]`, body)
-	})
-
-	t.Run("非空切片原样输出", func(t *testing.T) {
-		resp, body := run(func(c fiber.Ctx) error {
-			return response.Collection(c, []string{"a", "b"})
-		})
-
-		assert.Equal(t, fiber.StatusOK, resp.StatusCode)
-		assert.JSONEq(t, `["a","b"]`, body)
-	})
-}
-
-// TestAttachmentAndInline 校验流式附件与内联下载响应头。
-func TestAttachmentAndInline(t *testing.T) {
-	t.Run("Attachment 写入 Content-Disposition attachment", func(t *testing.T) {
-		content := "sample content"
-		resp, body := run(func(c fiber.Ctx) error {
-			return response.Attachment(c, "report.pdf", strings.NewReader(content), int64(len(content)), "application/pdf")
-		})
-
-		assert.Equal(t, fiber.StatusOK, resp.StatusCode)
-		assert.Contains(t, resp.Header.Get("Content-Disposition"), "attachment; filename=\"report.pdf\"")
-		assert.Equal(t, content, body)
-	})
-
-	t.Run("Inline 写入 Content-Disposition inline", func(t *testing.T) {
-		content := "image content"
-		resp, body := run(func(c fiber.Ctx) error {
-			return response.Inline(c, "image.png", strings.NewReader(content), int64(len(content)), "image/png")
-		})
-
-		assert.Equal(t, fiber.StatusOK, resp.StatusCode)
-		assert.Contains(t, resp.Header.Get("Content-Disposition"), "inline; filename=\"image.png\"")
-		assert.Equal(t, content, body)
-	})
-
-	t.Run("非 ASCII 文件名兜底为 ASCII，真名走 filename*", func(t *testing.T) {
-		resp, _ := run(func(c fiber.Ctx) error {
-			return response.Attachment(c, "账单.pdf", strings.NewReader("x"), 1, "application/pdf")
-		})
-
-		disposition := resp.Header.Get("Content-Disposition")
-		// 兜底 filename 参数不得出现 \uXXXX 转义串（中文名由 filename*= 以 UTF-8 承载）。
-		assert.NotContains(t, disposition, `\u`)
-		assert.Contains(t, disposition, "filename*=UTF-8''%E8%B4%A6%E5%8D%95.pdf")
-	})
 }

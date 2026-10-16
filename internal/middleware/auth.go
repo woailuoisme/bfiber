@@ -32,12 +32,12 @@ func (m *Middleware) Auth(guardNames ...string) fiber.Handler {
 	cfg.SuccessHandler = func(c fiber.Ctx) error {
 		token := jwtware.FromContext(c)
 		if token == nil || !token.Valid {
-			return errs.Render(c, errs.Unauthorized(errs.CodeAuthTokenInvalid, "Authentication is required"))
+			return errs.Render(c, errs.AuthenticationRequired())
 		}
 
 		claims, ok := token.Claims.(*authentication.Claims)
 		if !ok || claims == nil || claims.Subject == "" {
-			return errs.Render(c, errs.Unauthorized(errs.CodeAuthTokenInvalid, "Authentication is required"))
+			return errs.Render(c, errs.AuthenticationRequired())
 		}
 
 		reqCtx, err := m.authenticateClaimsWithManager(c.Context(), claims, guards)
@@ -112,7 +112,7 @@ func (m *Middleware) authenticateClaimsWithManager(ctx context.Context, claims *
 	}
 
 	if lastErr == nil {
-		lastErr = errs.Unauthorized(errs.CodeAuthTokenInvalid, "Authentication is required")
+		lastErr = errs.AuthenticationRequired()
 	}
 	return nil, lastErr
 }
