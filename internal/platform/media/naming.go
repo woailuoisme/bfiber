@@ -1,4 +1,4 @@
-// Package media 提供媒体文件上传、验证、处理、命名策略与 Imgproxy 防篡改签名服务。
+// Package media 提供媒体文件上传、安全校验、命名与分区路径策略、Imgproxy 防篡改签名与多态实体附件管理。
 package media
 
 import (

@@ -1,9 +1,10 @@
-// Package media_test 针对 Imgproxy 图像处理客户端、选项构建器与防篡改签名进行契约测试。
+// Package media_test 针对 Imgproxy 图像处理客户端与防篡改签名进行契约测试。
 package media_test
 
 import (
 	"context"
 	"encoding/hex"
+	"image/color"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -13,7 +14,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"bfiber/internal/config"
-	"bfiber/internal/shared/media"
+	"bfiber/internal/platform/media"
 )
 
 func TestImgproxyClient_Signature(t *testing.T) {
@@ -43,7 +44,7 @@ func TestImgproxyClient_Signature(t *testing.T) {
 		thumbURL, err := client.Thumbnail("https://storage.example.com/avatars/user.png", 200, 200)
 		require.NoError(t, err)
 		assert.True(t, strings.HasPrefix(thumbURL, "https://img.example.com/"))
-		assert.Contains(t, thumbURL, "/rs:fill:200:200:")
+		assert.Contains(t, thumbURL, "/rs:fit:200:200:")
 		assert.Contains(t, thumbURL, "/q:80/")
 		assert.True(t, strings.HasSuffix(thumbURL, ".webp"))
 		// 非 insecure 模式下不应包含 insecure 前缀
@@ -58,23 +59,6 @@ func TestImgproxyClient_Signature(t *testing.T) {
 		assert.True(t, strings.HasSuffix(avatarURL, ".webp"))
 	})
 
-	t.Run("Builder 链式构建生成 URL", func(t *testing.T) {
-		builtURL, err := client.Build("https://storage.example.com/photos/banner.jpg").
-			Resize(800, 600).
-			Format(media.FormatAVIF).
-			Quality(90).
-			Blur(1.5).
-			Sharpen(0.8).
-			Sign()
-
-		require.NoError(t, err)
-		assert.Contains(t, builtURL, "/rs:fit:800:600:")
-		assert.Contains(t, builtURL, "/q:90/")
-		assert.Contains(t, builtURL, "/bl:1.50/")
-		assert.Contains(t, builtURL, "/sh:0.80/")
-		assert.True(t, strings.HasSuffix(builtURL, ".avif"))
-	})
-
 	t.Run("Insecure 模式生成带 insecure 前缀的 URL", func(t *testing.T) {
 		insecureCfg := config.ImgproxyConfig{
 			BaseURL:  "https://img.example.com",
@@ -84,6 +68,29 @@ func TestImgproxyClient_Signature(t *testing.T) {
 		urlStr, err := insecureClient.Thumbnail("https://example.com/test.jpg", 100, 100)
 		require.NoError(t, err)
 		assert.Contains(t, urlStr, "https://img.example.com/insecure/")
+	})
+}
+
+func TestImgproxyClient_Inspect(t *testing.T) {
+	client := media.NewImageClient(config.ImgproxyConfig{BaseURL: "https://img.example.com"})
+
+	t.Run("读取图像宽高与格式", func(t *testing.T) {
+		meta, err := client.Inspect(solidPNG(t, 12, 7, color.RGBA{A: 0xFF}))
+		require.NoError(t, err)
+		assert.Equal(t, 12, meta.Width)
+		assert.Equal(t, 7, meta.Height)
+		assert.Equal(t, media.FormatPNG, meta.Format)
+		assert.Positive(t, meta.Size)
+	})
+
+	t.Run("空输入返回错误", func(t *testing.T) {
+		_, err := client.Inspect(nil)
+		require.Error(t, err)
+	})
+
+	t.Run("非图像输入返回错误", func(t *testing.T) {
+		_, err := client.Inspect([]byte("not an image"))
+		require.Error(t, err)
 	})
 }
 
@@ -127,7 +134,6 @@ func TestImgproxyClient_CheckHealth(t *testing.T) {
 		err := c.CheckHealth(context.Background())
 		require.NoError(t, err)
 		assert.NoError(t, c.Ping(context.Background()))
-		assert.NoError(t, c.HealthCheck())
 	})
 
 	t.Run("服务端非 200 返回错误", func(t *testing.T) {
@@ -144,5 +150,21 @@ func TestImgproxyClient_CheckHealth(t *testing.T) {
 		err := c.CheckHealth(context.Background())
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "HTTP 503")
+	})
+
+	t.Run("响应内容不含健康标识返回错误", func(t *testing.T) {
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte("unexpected payload"))
+		}))
+		defer server.Close()
+
+		cfg := config.ImgproxyConfig{
+			BaseURL: server.URL,
+			Enabled: true,
+		}
+		err := media.NewImageClient(cfg).CheckHealth(context.Background())
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "unexpected health response")
 	})
 }

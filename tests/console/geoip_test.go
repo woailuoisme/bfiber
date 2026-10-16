@@ -14,7 +14,7 @@ import (
 	"testing"
 	"time"
 
-	fiberClient "github.com/gofiber/fiber/v3/client"
+	"github.com/go-resty/resty/v2"
 	"github.com/lionsoul2014/ip2region/binding/golang/xdb"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -124,7 +124,6 @@ func TestGeoIPUpdateOptions_Run_SuccessWithMockServer(t *testing.T) {
 	opts.Path = targetPath
 	opts.URL = server.URL
 	opts.Force = true
-	opts.HTTPClient = server.Client()
 
 	err := opts.Run(context.Background())
 	require.NoError(t, err)
@@ -142,8 +141,8 @@ func TestGeoIPUpdateOptions_Run_SuccessWithMockServer(t *testing.T) {
 	assert.NotNil(t, ver)
 }
 
-// TestGeoIPUpdateOptions_Run_SuccessWithFiberClient 测试使用 Fiber v3 Client 下载并原子替换目标文件。
-func TestGeoIPUpdateOptions_Run_SuccessWithFiberClient(t *testing.T) {
+// TestGeoIPUpdateOptions_Run_SuccessWithInjectedClient 测试注入自定义 HTTP 客户端时下载并原子替换目标文件。
+func TestGeoIPUpdateOptions_Run_SuccessWithInjectedClient(t *testing.T) {
 	mockData := makeMockXDBData()
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		assert.Equal(t, "bfiber-cli/geoip-updater", r.Header.Get("User-Agent"))
@@ -166,7 +165,7 @@ func TestGeoIPUpdateOptions_Run_SuccessWithFiberClient(t *testing.T) {
 	opts.Path = targetPath
 	opts.URL = server.URL
 	opts.Force = true
-	opts.Client = fiberClient.New().SetTimeout(10 * time.Second)
+	opts.Client = resty.New().SetTimeout(10 * time.Second)
 
 	err := opts.Run(context.Background())
 	require.NoError(t, err)
@@ -214,7 +213,6 @@ func TestGeoIPUpdateOptions_Run_MirrorFallback(t *testing.T) {
 	opts.Path = targetPath
 	opts.URL = server.URL
 	opts.Force = true
-	opts.HTTPClient = server.Client()
 
 	// 第一次调用必定遇到首个请求 502 错误，Run 中只配置了单一 server.URL，故预期失败
 	err := opts.Run(context.Background())
@@ -248,7 +246,6 @@ func TestGeoIPUpdateOptions_Run_VerificationFailure(t *testing.T) {
 	opts.Path = targetPath
 	opts.URL = server.URL
 	opts.Force = true
-	opts.HTTPClient = server.Client()
 
 	err := opts.Run(context.Background())
 	require.Error(t, err)

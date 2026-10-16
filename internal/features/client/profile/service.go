@@ -2,14 +2,13 @@ package profile
 
 import (
 	"context"
-	"mime/multipart"
 
 	"github.com/uptrace/bun"
 
 	"bfiber/internal/database"
 	"bfiber/internal/database/models"
 	"bfiber/internal/platform/errs"
-	"bfiber/internal/shared/media"
+	"bfiber/internal/platform/media"
 )
 
 // Service 实现用户个人资料领域用例。
@@ -45,10 +44,10 @@ func (s *Service) UpdateProfile(ctx context.Context, userID string, body UpdateP
 }
 
 // UploadAvatar 上传新头像并原子更新用户档案中的头像链接（单事务自洽闭环）。
-func (s *Service) UploadAvatar(ctx context.Context, userID string, file *multipart.FileHeader) (ProfileResource, error) {
+func (s *Service) UploadAvatar(ctx context.Context, userID string, src media.Source) (ProfileResource, error) {
 	var updated *models.User
 	err := database.RunInTx(ctx, s.db, func(txCtx context.Context) error {
-		avatarURL, err := s.media.AttachAvatar(txCtx, userID, file)
+		avatarURL, err := s.media.AttachAvatar(txCtx, userID, src)
 		if err != nil {
 			return err
 		}

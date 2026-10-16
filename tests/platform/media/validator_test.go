@@ -7,7 +7,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"bfiber/internal/shared/media"
+	"bfiber/internal/platform/media"
 )
 
 func TestSecurityValidator_Validate(t *testing.T) {

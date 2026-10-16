@@ -11,7 +11,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 
-	"bfiber/internal/shared/media"
+	"bfiber/internal/platform/media"
 )
 
 func TestNaming_Strategies(t *testing.T) {

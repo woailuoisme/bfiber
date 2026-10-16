@@ -1,4 +1,4 @@
-// Package media 提供媒体文件上传、验证、处理、命名策略、Imgproxy 防篡改签名与多态实体附件管理。
+// Package media 提供媒体文件上传、安全校验、命名与分区路径策略、Imgproxy 防篡改签名与多态实体附件管理。
 package media
 
 import (
@@ -18,7 +18,7 @@ func New(
 	imgClient := NewWithStorage(mediaCfg.Imgproxy, storageCfg)
 
 	pipelineOpts := []PipelineOption{
-		WithImageProcessor(imgClient, mediaCfg.Imgproxy.DefaultFormat),
+		WithImageProcessor(imgClient),
 	}
 	if mediaCfg.MaxFileSize > 0 {
 		v := NewValidator().WithMaxFileSize(mediaCfg.MaxFileSize)
@@ -32,5 +32,5 @@ func New(
 	}
 
 	pipeline := NewPipeline(disk, pipelineOpts...)
-	return NewManager(mediaCfg, disk, db, pipeline, imgClient)
+	return newManager(mediaCfg, disk, db, pipeline, imgClient)
 }

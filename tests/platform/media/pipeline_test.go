@@ -3,14 +3,15 @@ package media_test
 
 import (
 	"bytes"
+	"image/color"
 	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"bfiber/internal/platform/media"
 	"bfiber/internal/platform/storage"
-	"bfiber/internal/shared/media"
 )
 
 func TestPipeline_RoundTrip(t *testing.T) {
@@ -27,7 +28,7 @@ func TestPipeline_RoundTrip(t *testing.T) {
 		media.WithCategoryDatePath("uploads"),
 	)
 
-	validPNG := []byte("\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x01\x00\x00\x00\x01\x08\x06\x00\x00\x00\x1f\x15c4\x00\x00\x00\nIDATx\x9cc\x00\x01\x00\x00\x05\x00\x01\r\n-\xb4\x00\x00\x00\x00IEND\xaeB`\x82")
+	validPNG := solidPNG(t, 1, 1, color.RGBA{A: 0xFF})
 
 	t.Run("UploadBytes 上传成功并生成规范元数据", func(t *testing.T) {
 		info, err := pipeline.UploadBytes(ctx, validPNG, "test_logo.png", "logos")

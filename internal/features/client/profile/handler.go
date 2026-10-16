@@ -1,6 +1,9 @@
 package profile
 
 import (
+	"io"
+	"mime/multipart"
+
 	"github.com/gofiber/fiber/v3"
 
 	"bfiber/internal/platform/authentication"
@@ -93,16 +96,37 @@ func (h *Handler) UploadAvatar(c fiber.Ctx) error {
 		return err
 	}
 
+	// 表单本身解析失败（如超出 BodyLimit）如实上抛；解析成功后的取文件失败只意味着字段缺失，
+	// 由下方 required 校验统一返回 422。
+	if _, err := c.Req().MultipartForm(); err != nil {
+		return err
+	}
+
 	file, _ := c.FormFile("avatar")
 	body := UploadAvatarBody{Avatar: file}
 	if err := validator.Engine().Struct(body); err != nil {
 		return err
 	}
 
-	profile, err := h.service.UploadAvatar(c.Context(), userID, body.Avatar)
+	profile, err := h.service.UploadAvatar(c.Context(), userID, avatarSource{fh: body.Avatar})
 	if err != nil {
 		return err
 	}
 
 	return response.OK(c, profile)
 }
+
+// avatarSource 将 multipart 上传物适配为与传输协议解耦的媒体上传源。
+type avatarSource struct{ fh *multipart.FileHeader }
+
+// FileName 返回客户端提交的原始文件名。
+func (s avatarSource) FileName() string { return s.fh.Filename }
+
+// Size 返回 multipart 头声明的文件字节数。
+func (s avatarSource) Size() int64 { return s.fh.Size }
+
+// ContentType 返回 multipart 头声明的 MIME 类型。
+func (s avatarSource) ContentType() string { return s.fh.Header.Get("Content-Type") }
+
+// Open 打开底层上传文件流。
+func (s avatarSource) Open() (io.ReadCloser, error) { return s.fh.Open() }

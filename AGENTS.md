@@ -85,6 +85,7 @@ internal/
 │   ├── i18n/                   # 基于 TOML 的多语言字段与提示信息翻译
 │   ├── logger/                 # Zap 结构化日志包装
 │   ├── mailer/                 # SMTP 邮件发送抽象
+│   ├── media/                  # 媒体上传管道、安全校验、命名/路径策略、Imgproxy 防篡改签名与多态附件管理
 │   ├── money/                  # 不可变高精度货币值对象 (Money)、ISO-4217 元数据、金融舍入与无损分摊
 │   ├── response/               # HTTP 成功响应封装（扁平对象与分页信封）
 │   ├── storage/                # 本地与 S3/MinIO 对象存储适配
@@ -94,7 +95,6 @@ internal/
 │   ├── enums/                  # 全局业务枚举与常量定义
 │   ├── events/                 # 跨切片领域事件模型
 │   ├── indexes/                # 全文检索索引器定义与集中装配
-│   ├── media/                  # 媒体处理、验证、签名与多态附件管理（基于 storage 与 models）
 │   └── notification/           # 跨切片通知类型与数据载荷
 tests/                          # 外部测试包（测试代码与业务逻辑彻底解耦）
 └── integration/                # 真实外部依赖的集成测试（声明 //go:build integration）
@@ -108,6 +108,7 @@ tests/                          # 外部测试包（测试代码与业务逻辑�
    - **Handler**：只负责 HTTP 参数解析绑定、入参校验调度、调用 Service、组装 `response.OK`。**严禁在 Handler 中编写核心业务逻辑或直接操作 ORM/SQL**。
    - **Service**：承载纯业务规则与事务协调，输入输出均为强类型 DTO/Model。通过返回 `samber/oops` 结构化错误传递失败原因。
    - **Platform**：基础设施层必须保持纯粹独立，**严禁 Platform 反向依赖任何 Feature 或 Shared 业务包**。
+   - **平台层唯一例外 (`internal/platform/media`)**：`media` 表在全系统仅由该包读写，故允许 `platform/media` 依赖 `internal/database` 与 `internal/database/models`；**其余 platform 包一律严禁**反向依赖数据层。
 4. **Middleware 传输层协议隔离与就地内聚**：
    - `internal/middleware/` 是专属于 HTTP Delivery/Transport 传输层的通用横切逻辑（认证、鉴权、限流、CORS、监控、全局错误转换），与 Web 协议强绑定。**严禁将 `middleware` 迁入协议无关的 `internal/shared/`**，避免污染纯净的领域共享内核。
    - 通用传输层中间件集中于 `internal/middleware/`；若未来存在仅限单一 Feature 使用的特定业务拦截器，**直接就地内聚于对应的 `internal/features/<feature>/` 内部**。

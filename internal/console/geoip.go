@@ -5,13 +5,12 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
 	"time"
 
-	fiberClient "github.com/gofiber/fiber/v3/client"
+	"github.com/go-resty/resty/v2"
 	"github.com/lionsoul2014/ip2region/binding/golang/xdb"
 	"github.com/spf13/cobra"
 
@@ -28,14 +27,16 @@ var defaultGeoIPDownloadURLs = []string{
 // 缺省存储路径。
 const defaultGeoIPDBPath = "storage/app/geoip/ip2region_v4.xdb"
 
+// statusOK 是下载源唯一可接受的成功状态码。
+const statusOK = 200
+
 // GeoIPUpdateOptions 封装 geoip:update 命令的参数与依赖容器 (SRP & DIP)。
 type GeoIPUpdateOptions struct {
-	Path       string
-	URL        string
-	Force      bool
-	HTTPClient *http.Client
-	Client     *fiberClient.Client
-	Factory    Factory
+	Path    string
+	URL     string
+	Force   bool
+	Client  *resty.Client
+	Factory Factory
 }
 
 // NewGeoIPUpdateOptions 构造 GeoIPUpdateOptions 实例。
@@ -101,19 +102,16 @@ func (o *GeoIPUpdateOptions) Run(ctx context.Context) error {
 		_ = os.Remove(tmpFile)
 	}()
 
+	client := o.Client
+	if client == nil {
+		client = resty.New().SetTimeout(90 * time.Second)
+	}
+
 	var downloadErr error
 	for i, u := range urls {
 		core.TitleTo(streams.Out, fmt.Sprintf("Downloading GeoIP database [Source %d/%d: %s]...", i+1, len(urls), u))
 
-		if o.Client != nil {
-			downloadErr = o.downloadFileFiber(ctx, o.Client, u, tmpFile)
-		} else {
-			httpClient := o.HTTPClient
-			if httpClient == nil {
-				httpClient = &http.Client{Timeout: 90 * time.Second}
-			}
-			downloadErr = o.downloadFile(ctx, httpClient, u, tmpFile)
-		}
+		downloadErr = o.downloadFile(ctx, client, u, tmpFile)
 		if downloadErr == nil {
 			break
 		}
@@ -139,37 +137,26 @@ func (o *GeoIPUpdateOptions) Run(ctx context.Context) error {
 	return nil
 }
 
-func (o *GeoIPUpdateOptions) downloadFileFiber(ctx context.Context, c *fiberClient.Client, url, destPath string) error {
-	req := c.R().SetContext(ctx).SetHeader("Accept-Encoding", "identity").SetUserAgent("bfiber-cli/geoip-updater")
-	resp, err := req.Get(url)
+// downloadFile 以流式方式下载远端数据库并写入目标文件，同时驱动进度条。
+func (o *GeoIPUpdateOptions) downloadFile(ctx context.Context, client *resty.Client, url, destPath string) error {
+	resp, err := client.R().
+		SetContext(ctx).
+		SetHeader("Accept-Encoding", "identity").
+		SetHeader("User-Agent", "bfiber-cli/geoip-updater").
+		SetDoNotParseResponse(true).
+		Get(url)
 	if err != nil {
 		return err
 	}
-	defer fiberClient.ReleaseResponse(resp)
 
-	if resp.StatusCode() != http.StatusOK {
+	body := resp.RawBody()
+	if body == nil {
+		return errors.New("response body is empty")
+	}
+	defer func() { _ = body.Close() }()
+
+	if resp.StatusCode() != statusOK {
 		return fmt.Errorf("HTTP server returned non-200 status: %s", resp.Status())
-	}
-
-	return resp.Save(destPath)
-}
-
-func (o *GeoIPUpdateOptions) downloadFile(ctx context.Context, client *http.Client, url, destPath string) error {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
-	if err != nil {
-		return err
-	}
-	req.Header.Set("User-Agent", "bfiber-cli/geoip-updater")
-	req.Header.Set("Accept-Encoding", "identity")
-
-	resp, err := client.Do(req)
-	if err != nil {
-		return err
-	}
-	defer func() { _ = resp.Body.Close() }()
-
-	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("HTTP server returned non-200 status: %s", resp.Status)
 	}
 
 	out, err := os.Create(destPath)
@@ -179,7 +166,7 @@ func (o *GeoIPUpdateOptions) downloadFile(ctx context.Context, client *http.Clie
 	defer func() { _ = out.Close() }()
 
 	streams := o.Factory.IOStreams()
-	total := resp.ContentLength
+	total := resp.RawResponse.ContentLength
 	if total <= 0 {
 		// ip2region_v4.xdb 官方当前大小基准约 11MB；若服务端未返回 Content-Length（如分块传输），以此基准驱动百分比与进度条
 		total = 11 * 1024 * 1024
@@ -196,7 +183,7 @@ func (o *GeoIPUpdateOptions) downloadFile(ctx context.Context, client *http.Clie
 		default:
 		}
 
-		n, rErr := resp.Body.Read(buf)
+		n, rErr := body.Read(buf)
 		if n > 0 {
 			if _, wErr := out.Write(buf[:n]); wErr != nil {
 				return wErr

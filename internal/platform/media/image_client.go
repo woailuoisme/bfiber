@@ -1,4 +1,4 @@
-// Package media 提供媒体文件上传、验证、处理、命名策略与 Imgproxy 防篡改签名服务。
+// Package media 提供媒体文件上传、安全校验、命名与分区路径策略、Imgproxy 防篡改签名与多态实体附件管理。
 package media
 
 import (
@@ -15,13 +15,13 @@ import (
 	_ "image/gif"
 	_ "image/jpeg"
 	_ "image/png"
-	"net/http"
+	"io"
 	"path"
 	"strconv"
 	"strings"
 	"time"
 
-	fiberClient "github.com/gofiber/fiber/v3/client"
+	"github.com/go-resty/resty/v2"
 	"github.com/samber/lo"
 	"github.com/samber/oops"
 	_ "golang.org/x/image/webp"
@@ -30,13 +30,15 @@ import (
 	"bfiber/internal/platform/errs"
 )
 
+// healthStatusOK 是图像服务健康检查唯一可接受的成功状态码。
+const healthStatusOK = 200
+
 // Format 指定输出图像格式。
 type Format string
 
 const (
 	FormatWebP Format = "webp"
 	FormatJPEG Format = "jpeg"
-	FormatJPG  Format = "jpg"
 	FormatPNG  Format = "png"
 	FormatAVIF Format = "avif"
 	FormatGIF  Format = "gif"
@@ -181,21 +183,16 @@ func WithSharpen(sigma float64) ProcessOption {
 	}
 }
 
-// Client 定义现代化 imgproxy 客户端与图像元数据处理契约。
+// Client 定义 imgproxy 防篡改签名与图像元数据处理契约。
 type Client interface {
 	URL(sourceURI string, opts ...ProcessOption) (string, error)
-	Build(sourceURI string) *Builder
 	Thumbnail(sourceURI string, width, height int) (string, error)
 	Avatar(sourceURI string, size int) (string, error)
 	Inspect(input []byte) (*ImageMeta, error)
-	ResolveSourceURI(path string) string
 	CheckHealth(ctx context.Context) error
-	HealthCheck() error
 	Ping(ctx context.Context) error
 	Driver() string
 	Enabled() bool
-	Close() error
-	Shutdown() error
 }
 
 // client 结构体实现 Client 接口。
@@ -206,7 +203,7 @@ type client struct {
 	insecure   bool
 	config     config.ImgproxyConfig
 	storageCfg config.StorageConfig
-	httpClient *fiberClient.Client
+	httpClient *resty.Client
 }
 
 // NewImageClient 创建并初始化基于 imgproxy 的图像服务客户端。
@@ -218,21 +215,10 @@ func NewImageClient(cfg config.ImgproxyConfig) Client {
 func NewWithStorage(imgCfg config.ImgproxyConfig, storageCfg config.StorageConfig) Client {
 	mergedCfg := mergeImgproxyConfig(imgCfg)
 	baseURL, keyHex, saltHex := mergedCfg.ResolveCredentials()
-	keyBytes, _ := hex.DecodeString(keyHex)
-	saltBytes, _ := hex.DecodeString(saltHex)
-
-	if len(keyBytes) == 0 && len(keyHex) > 0 {
-		keyBytes = []byte(keyHex)
-	}
-	if len(saltBytes) == 0 && len(saltHex) > 0 {
-		saltBytes = []byte(saltHex)
-	}
+	keyBytes := decodeCredential(keyHex)
+	saltBytes := decodeCredential(saltHex)
 
 	trimmedURL := cmp.Or(strings.TrimRight(strings.TrimSpace(baseURL), "/"), "http://localhost:8088")
-
-	fc := fiberClient.New().
-		SetTimeout(2 * time.Second).
-		SetUserAgent("bfiber-imgproxy-client")
 
 	return &client{
 		baseURL:    trimmedURL,
@@ -241,8 +227,18 @@ func NewWithStorage(imgCfg config.ImgproxyConfig, storageCfg config.StorageConfi
 		insecure:   mergedCfg.Insecure || len(keyBytes) == 0 || len(saltBytes) == 0,
 		config:     mergedCfg,
 		storageCfg: storageCfg,
-		httpClient: fc,
+		httpClient: resty.New().SetTimeout(2 * time.Second),
 	}
+}
+
+// decodeCredential 解析 hex 编码的签名密钥，非 hex 时退回原始字符串字节。
+// 若忽略解码错误，奇数长度的非法 hex 会被静默截断为半截密钥，使全部签名 URL 失效。
+func decodeCredential(hexValue string) []byte {
+	decoded, err := hex.DecodeString(hexValue)
+	if err != nil || len(decoded) == 0 {
+		return []byte(hexValue)
+	}
+	return decoded
 }
 
 // mergeImgproxyConfig 为未显式配置的 imgproxy 参数填充合理的默认值。
@@ -254,15 +250,15 @@ func mergeImgproxyConfig(cfg config.ImgproxyConfig) config.ImgproxyConfig {
 }
 
 // URL 根据函数式选项构建已签名的 imgproxy 处理 URL。
-func (s *client) URL(sourceURI string, opts ...ProcessOption) (string, error) {
+func (c *client) URL(sourceURI string, opts ...ProcessOption) (string, error) {
 	if strings.TrimSpace(sourceURI) == "" {
 		return "", errs.BadRequest("source uri cannot be empty")
 	}
 
-	resolvedURI := s.ResolveSourceURI(sourceURI)
+	resolvedURI := c.resolveSourceURI(sourceURI)
 	cfg := &ProcessConfig{
-		Format:  NormalizeFormat(s.config.DefaultFormat),
-		Quality: s.config.DefaultQuality,
+		Format:  NormalizeFormat(c.config.DefaultFormat),
+		Quality: c.config.DefaultQuality,
 	}
 
 	for _, opt := range opts {
@@ -271,34 +267,38 @@ func (s *client) URL(sourceURI string, opts ...ProcessOption) (string, error) {
 		}
 	}
 
-	return s.generateURL(resolvedURI, cfg)
-}
-
-// Build 返回链式 URL 构建器实例。
-func (s *client) Build(sourceURI string) *Builder {
-	resolvedURI := s.ResolveSourceURI(sourceURI)
-	return newBuilder(s, resolvedURI)
+	return c.generateURL(resolvedURI, cfg)
 }
 
 // Thumbnail 快捷构建等比自适应缩略图 URL。
-func (s *client) Thumbnail(sourceURI string, width, height int) (string, error) {
-	return s.URL(sourceURI,
-		WithResizingType(ResizeFill),
-		WithResize(width, height),
-	)
+func (c *client) Thumbnail(sourceURI string, width, height int) (string, error) {
+	return c.URL(sourceURI, thumbnailOptions(width, height)...)
 }
 
 // Avatar 快捷构建头像裁切（自动识别人脸重心）URL。
-func (s *client) Avatar(sourceURI string, size int) (string, error) {
-	return s.URL(sourceURI,
+func (c *client) Avatar(sourceURI string, size int) (string, error) {
+	return c.URL(sourceURI, avatarOptions(size)...)
+}
+
+// thumbnailOptions 返回等比缩略图所需的处理选项：缩放到外接盒内并保持长宽比（不裁切、不放大）。
+func thumbnailOptions(width, height int) []ProcessOption {
+	return []ProcessOption{
+		WithResizingType(ResizeFit),
+		WithResize(width, height),
+	}
+}
+
+// avatarOptions 返回头像裁切所需的处理选项（填充正方形并按人脸重心对齐）。
+func avatarOptions(size int) []ProcessOption {
+	return []ProcessOption{
 		WithResizingType(ResizeFill),
 		WithResize(size, size),
 		WithGravity(GravityFocusPoint),
-	)
+	}
 }
 
 // Inspect 纯 Go 标准库轻量解析图像宽高与格式（零 CGO）。
-func (s *client) Inspect(input []byte) (*ImageMeta, error) {
+func (c *client) Inspect(input []byte) (*ImageMeta, error) {
 	if len(input) == 0 {
 		return nil, errs.BadRequest("image input bytes cannot be empty")
 	}
@@ -316,8 +316,8 @@ func (s *client) Inspect(input []byte) (*ImageMeta, error) {
 	}, nil
 }
 
-// ResolveSourceURI 根据底层存储驱动自适应补全 URI（如 local:// 或 s3://）。
-func (s *client) ResolveSourceURI(sourcePath string) string {
+// resolveSourceURI 根据底层存储驱动自适应补全 URI（如 local:// 或 s3://）。
+func (c *client) resolveSourceURI(sourcePath string) string {
 	cleanPath := strings.TrimSpace(sourcePath)
 	if cleanPath == "" {
 		return ""
@@ -328,71 +328,73 @@ func (s *client) ResolveSourceURI(sourcePath string) string {
 	}
 
 	trimmed := strings.TrimPrefix(cleanPath, "/")
-	driver := strings.ToLower(strings.TrimSpace(s.storageCfg.Driver))
+	driver := strings.ToLower(strings.TrimSpace(c.storageCfg.Driver))
 
 	if driver == config.StorageDriverS3 {
-		return lo.Ternary(s.storageCfg.S3.Bucket != "", fmt.Sprintf("s3://%s/%s", s.storageCfg.S3.Bucket, trimmed), "s3://"+trimmed)
+		if c.storageCfg.S3.Bucket != "" {
+			return fmt.Sprintf("s3://%s/%s", c.storageCfg.S3.Bucket, trimmed)
+		}
+		return "s3://" + trimmed
 	}
 
 	return "local://" + trimmed
 }
 
 // CheckHealth 检查 imgproxy 服务的连通性与健康状态。
-func (s *client) CheckHealth(ctx context.Context) error {
-	if s.baseURL == "" {
+func (c *client) CheckHealth(ctx context.Context) error {
+	if c.baseURL == "" {
 		return errors.New("imgproxy base url is not configured")
 	}
 
-	healthURL := s.baseURL + "/health"
-	resp, err := s.httpClient.R().SetContext(ctx).Get(healthURL)
+	healthURL := c.baseURL + "/health"
+	resp, err := c.httpClient.R().
+		SetContext(ctx).
+		SetHeader("User-Agent", "bfiber-imgproxy-client").
+		SetDoNotParseResponse(true).
+		Get(healthURL)
 	if err != nil {
 		return fmt.Errorf("imgproxy unreachable: %w", err)
 	}
-	defer fiberClient.ReleaseResponse(resp)
 
-	if resp.StatusCode() != http.StatusOK {
+	body := resp.RawBody()
+	if body == nil {
+		return errors.New("imgproxy health response body is empty")
+	}
+	defer func() { _ = body.Close() }()
+
+	if resp.StatusCode() != healthStatusOK {
 		return fmt.Errorf("imgproxy /health returned HTTP %d", resp.StatusCode())
 	}
 
-	if !strings.Contains(resp.String(), "imgproxy is running") {
-		return fmt.Errorf("imgproxy unexpected health response: %s", resp.String())
+	raw, err := io.ReadAll(body)
+	if err != nil {
+		return fmt.Errorf("imgproxy health response read failed: %w", err)
+	}
+
+	if !strings.Contains(string(raw), "imgproxy is running") {
+		return fmt.Errorf("imgproxy unexpected health response: %s", string(raw))
 	}
 
 	return nil
 }
 
-// HealthCheck 提供无 context 入参的健康检查适配入口。
-func (s *client) HealthCheck() error {
-	return s.CheckHealth(context.Background())
-}
-
 // Ping 执行 imgproxy 连通性探测（满足 ready.Pinger 契约）。
-func (s *client) Ping(ctx context.Context) error {
-	return s.CheckHealth(ctx)
+func (c *client) Ping(ctx context.Context) error {
+	return c.CheckHealth(ctx)
 }
 
 // Driver 返回当前图像服务驱动名称。
-func (s *client) Driver() string {
+func (c *client) Driver() string {
 	return "imgproxy"
 }
 
 // Enabled 报告当前图像服务是否启用。
-func (s *client) Enabled() bool {
-	return s.config.IsEnabled()
-}
-
-// Close 优雅释放资源。
-func (s *client) Close() error {
-	return nil
-}
-
-// Shutdown 优雅停机实现。
-func (s *client) Shutdown() error {
-	return s.Close()
+func (c *client) Enabled() bool {
+	return c.config.IsEnabled()
 }
 
 // generateURL 内部组装处理参数并生成最终签名或非签名 URL。
-func (s *client) generateURL(sourceURI string, cfg *ProcessConfig) (string, error) {
+func (c *client) generateURL(sourceURI string, cfg *ProcessConfig) (string, error) {
 	options := buildOptions(cfg)
 	encodedSource := base64.RawURLEncoding.EncodeToString([]byte(sourceURI))
 
@@ -401,16 +403,16 @@ func (s *client) generateURL(sourceURI string, cfg *ProcessConfig) (string, erro
 	options = append(options, encodedSource+ext)
 	pathWithoutSignature := "/" + path.Join(options...)
 
-	if s.insecure {
-		return fmt.Sprintf("%s/insecure%s", s.baseURL, pathWithoutSignature), nil
+	if c.insecure {
+		return fmt.Sprintf("%s/insecure%s", c.baseURL, pathWithoutSignature), nil
 	}
 
-	mac := hmac.New(sha256.New, s.key)
-	mac.Write(s.salt)
+	mac := hmac.New(sha256.New, c.key)
+	mac.Write(c.salt)
 	mac.Write([]byte(pathWithoutSignature))
 	signature := base64.RawURLEncoding.EncodeToString(mac.Sum(nil))
 
-	return fmt.Sprintf("%s/%s%s", s.baseURL, signature, pathWithoutSignature), nil
+	return fmt.Sprintf("%s/%s%s", c.baseURL, signature, pathWithoutSignature), nil
 }
 
 // buildOptions 将处理参数转化为 imgproxy 选项序列。

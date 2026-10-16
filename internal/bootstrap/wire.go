@@ -31,6 +31,7 @@ import (
 	"bfiber/internal/platform/influxdb"
 	"bfiber/internal/platform/logger"
 	"bfiber/internal/platform/mailer"
+	"bfiber/internal/platform/media"
 	"bfiber/internal/platform/notification"
 	"bfiber/internal/platform/payment"
 	"bfiber/internal/platform/pdf"
@@ -42,7 +43,6 @@ import (
 	"bfiber/internal/platform/telemetry"
 	"bfiber/internal/platform/temporal"
 	"bfiber/internal/platform/wechat"
-	"bfiber/internal/shared/media"
 	sharedDatabase "bfiber/internal/shared/notification/database"
 )
 
