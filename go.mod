@@ -50,7 +50,7 @@ require (
 	github.com/pelletier/go-toml/v2 v2.4.3
 	github.com/pgvector/pgvector-go v0.4.1
 	github.com/redis/go-redis/v9 v9.23.0
-	github.com/redis/rueidis v1.0.78
+	github.com/redis/rueidis v1.0.79
 	github.com/resend/resend-go/v2 v2.28.0
 	github.com/samber/hot v0.13.1
 	github.com/samber/lo v1.53.0
