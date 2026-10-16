@@ -4,9 +4,13 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/http"
+	"net/url"
 	"os"
 	"strings"
+	"time"
 
+	"github.com/go-resty/resty/v2"
 	"github.com/minio/minio-go/v7"
 	"github.com/minio/minio-go/v7/pkg/credentials"
 	"github.com/spf13/cobra"
@@ -14,6 +18,9 @@ import (
 	"bfiber/internal/config"
 	"bfiber/internal/console/core"
 )
+
+// anonymousProbeTimeout 匿名可读性探测的超时上限。
+const anonymousProbeTimeout = 5 * time.Second
 
 // StorageInitOptions 封装 storage:init 命令的参数与依赖容器 (SRP & DIP)。
 type StorageInitOptions struct {
@@ -123,16 +130,126 @@ func initS3Bucket(ctx context.Context, streams *core.IOStreams, s3Cfg config.S3S
 
 	if public {
 		core.TitleTo(streams.Out, fmt.Sprintf("Applying public-read policy to bucket [%s]...", bucketName))
-		policy := fmt.Sprintf(`{"Version":"2012-10-17","Statement":[{"Sid":"PublicReadGetObject","Effect":"Allow","Principal":"*","Action":["s3:GetObject"],"Resource":["arn:aws:s3:::%s/*"]}]}`, bucketName)
-		if err := client.SetBucketPolicy(ctx, bucketName, policy); err != nil {
-			core.WarnTo(streams.ErrOut, "Warning: failed to set bucket policy (server might manage policy out-of-band): %v", err)
+		if err := client.SetBucketPolicy(ctx, bucketName, publicReadPolicy(bucketName)); err != nil {
+			core.WarnTo(streams.ErrOut, "Warning: failed to set bucket policy: %v", err)
 		} else {
 			core.SuccessTo(streams.Out, "✓ Public-read policy configured for [%s].", bucketName)
 		}
 	}
 
+	// 无论策略是否设置成功，都实测一次「应用会产出的直连地址」是否真的可读：
+	// 基址取 AWS_URL（配置了它就是 app 产出的形态），否则按 endpoint 与桶名推导。
+	reportDirectURLReadiness(ctx, streams, client, s3Cfg, bucketName)
+
 	core.SuccessTo(streams.Out, "Storage initialization completed successfully.")
 	return nil
+}
+
+// publicReadPolicy 构造允许匿名读取指定桶内对象的桶策略。
+func publicReadPolicy(bucketName string) string {
+	return fmt.Sprintf(`{"Version":"2012-10-17","Statement":[{"Sid":"PublicReadGetObject","Effect":"Allow","Principal":"*","Action":["s3:GetObject"],"Resource":["arn:aws:s3:::%s/*"]}]}`, bucketName)
+}
+
+// reportDirectURLReadiness 实测「应用会产出的直连对象 URL」当前是否真的可读，并给出确定结论。
+// 判据用桶内一个真实对象的无凭据 GET：web 端点对「桶未开放」与「对象不存在」都返回 404，
+// 用不存在的键探测会把「未开放」误判为「可读」，因此不能用 403/404 区分。
+func reportDirectURLReadiness(
+	ctx context.Context,
+	streams *core.IOStreams,
+	client *minio.Client,
+	s3Cfg config.S3StorageConfig,
+	bucketName string,
+) {
+	probeKey, err := firstObjectKey(ctx, client, bucketName)
+	if err != nil {
+		core.WarnTo(streams.ErrOut, "• Cannot verify anonymous read access on bucket [%s]: %v", bucketName, err)
+		return
+	}
+	if probeKey == "" {
+		core.InfoTo(streams.Out, "• Bucket [%s] is empty: nothing to verify anonymous read access against.", bucketName)
+		return
+	}
+
+	readable, err := urlReadableAnonymously(ctx, effectivePublicBase(s3Cfg, bucketName), probeKey)
+	switch {
+	case err != nil:
+		core.WarnTo(streams.ErrOut, "• Cannot verify anonymous read access on bucket [%s]: %v", bucketName, err)
+	case readable:
+		core.InfoTo(streams.Out, "• Bucket [%s] is anonymously readable: direct object URLs keep working.", bucketName)
+	default:
+		core.WarnTo(streams.ErrOut, "• Bucket [%s] is NOT anonymously readable: direct object URLs will fail.", bucketName)
+		if strings.TrimSpace(s3Cfg.PublicURL) == "" {
+			core.WarnTo(streams.ErrOut, "  Open the bucket for public read out-of-band, set AWS_URL to a fronting base, or serve objects through presigned URLs / imgproxy.")
+		} else {
+			core.WarnTo(streams.ErrOut, "  AWS_URL is set: make sure that fronting base (CDN / reverse proxy) authenticates to the origin itself.")
+		}
+	}
+}
+
+// effectivePublicBase 返回应用生成直连对象 URL 时实际使用的基础地址：
+// 配置了 AWS_URL 即它（含应用自己的拼接规则：去掉尾斜杠后加 /<key>），否则按 endpoint 与桶名推导。
+func effectivePublicBase(s3Cfg config.S3StorageConfig, bucketName string) string {
+	if publicURL := strings.TrimSuffix(strings.TrimSpace(s3Cfg.PublicURL), "/"); publicURL != "" {
+		return publicURL
+	}
+
+	scheme := "http"
+	if s3Cfg.UseSSL {
+		scheme = "https"
+	}
+	return fmt.Sprintf("%s://%s/%s", scheme, strings.Trim(strings.TrimSpace(s3Cfg.Endpoint), "/"), bucketName)
+}
+
+// firstObjectKey 返回桶内任意一个真实对象键，用于构造无歧义的匿名探测；空桶返回空串。
+// 依赖 minio-go 的契约：列举错误以 Err 字段条目投递而非静默关通道，
+// 否则这里的空串会把「列举失败」误报成「桶为空」。
+func firstObjectKey(ctx context.Context, client *minio.Client, bucketName string) (string, error) {
+	objects := client.ListObjects(ctx, bucketName, minio.ListObjectsOptions{MaxKeys: 1, Recursive: true})
+
+	select {
+	case object, ok := <-objects:
+		if !ok {
+			return "", nil
+		}
+		if object.Err != nil {
+			return "", object.Err
+		}
+		return object.Key, nil
+	case <-ctx.Done():
+		return "", ctx.Err()
+	}
+}
+
+// urlReadableAnonymously 以无凭据 GET 判定给定对象地址是否可匿名读取：
+// 200 即可读；403 / 404 均视为不可读；其它状态无法判定，如实上报。
+// 探测不缓冲响应体（对象可能很大，只看状态码）。
+func urlReadableAnonymously(ctx context.Context, base, objectKey string) (bool, error) {
+	// 键内的「/」是路径分隔符，不能整体转义：走 URL 的 Path 编码规则，
+	// 只转义空格、?、# 等保留字符，保留分隔符（PathEscape 会把 / 也转义掉）。
+	target := url.URL{Path: "/" + objectKey}
+
+	resp, err := resty.New().SetTimeout(anonymousProbeTimeout).
+		SetDoNotParseResponse(true).
+		R().
+		SetContext(ctx).
+		Get(base + target.EscapedPath())
+	if err != nil {
+		return false, err
+	}
+
+	// 不解析响应体时由调用方负责关闭，避免连接悬挂。
+	if resp.RawResponse != nil && resp.RawResponse.Body != nil {
+		_ = resp.RawResponse.Body.Close()
+	}
+
+	switch resp.StatusCode() {
+	case http.StatusOK:
+		return true, nil
+	case http.StatusForbidden, http.StatusNotFound:
+		return false, nil
+	default:
+		return false, fmt.Errorf("unexpected status %d from anonymous probe", resp.StatusCode())
+	}
 }
 
 // newStorageInitCmd 构造 storage:init 命令。

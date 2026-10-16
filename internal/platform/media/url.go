@@ -11,8 +11,10 @@ import (
 )
 
 // URL 智能生成媒体文件的访问 URL。
-// 传入图像处理选项且图像服务可用时生成防篡改签名派生 URL；否则返回 Storage Disk 原始/预签名 URL。
-// 记录为空、未配置公开地址或派生失败时统一返回空串，调用方以空串视为「无可访问链接」。
+// 传入图像处理选项且图像服务可用时生成防篡改签名派生 URL；否则返回存储驱动自报的公开地址。
+// 驱动未配置公开地址时两者不同：local 返回空串；s3 返回按 endpoint 推导的直连地址，
+// 而该地址只在桶允许匿名读取时可用，私有桶下请求侧会收到 403（此时应改走派生或预签名 URL）。
+// 记录为空或派生失败时返回空串，调用方以空串视为「无可访问链接」。
 func (m *Manager) URL(ctx context.Context, mediaItem *models.Media, opts ...ProcessOption) string {
 	if len(opts) == 0 {
 		return m.originalURL(mediaItem)
@@ -68,7 +70,8 @@ func (m *Manager) originalURL(mediaItem *models.Media) string {
 		return ""
 	}
 
-	// 未配置公开访问地址时 disk.URL 会报错，此处按无链接处理。
+	// disk.URL 失败即按无链接处理：local 驱动在未配置公开地址时返回 ErrNoPublicURL，
+	// s3 驱动则会推导 endpoint 直连地址（该地址要求桶匿名可读，否则请求侧收到 403）。
 	url, _ := m.disk.URL(mediaItem.FileName)
 	return url
 }

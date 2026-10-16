@@ -65,7 +65,9 @@ type Inspector interface {
 
 // PublicURLer 定义提供永久公开可访问地址的角色契约。
 type PublicURLer interface {
-	// URL 返回对象的公开访问地址；未配置公开地址时返回 ErrNoPublicURL。
+	// URL 返回对象的公开访问地址。
+	// 未配置公开地址时：local 驱动返回 ErrNoPublicURL；s3 兼容驱动按 endpoint 与桶名推导直连地址，
+	// 而该地址只在桶允许匿名读取时可用（私有桶应配置公开地址前缀或改用 TemporaryURL）。
 	URL(path string) (string, error)
 }
 
