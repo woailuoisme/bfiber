@@ -86,6 +86,60 @@ func bindJSON(t *testing.T, body string, target any, translator *i18n.Translator
 	return bindErr
 }
 
+// mergeProbe 可同时触发标签校验失败与 Validatable 钩子失败。
+type mergeProbe struct {
+	PageSize int    `query:"pageSize" validate:"omitempty,min=1,max=100"`
+	Sort     string `query:"sort" validate:"omitempty,max=120"`
+}
+
+// Validate 实现 Validatable 契约，仅对排序白名单做命令式校验。
+func (p mergeProbe) Validate() error {
+	if p.Sort == "hacked" {
+		return errs.Validation(map[string][]string{"sort": {"disallowed sort column: hacked"}})
+	}
+	return nil
+}
+
+// TestTagAndHookValidationBothReported 校验标签校验与 Validatable 钩子同时失败时两边字段都上报。
+// 钩子此前会被标签错误整体遮蔽，调用方只能看到一半的字段明细。
+func TestTagAndHookValidationBothReported(t *testing.T) {
+	t.Parallel()
+
+	err := validator.NewFiberValidator().Validate(mergeProbe{PageSize: 999, Sort: "hacked"})
+	require.Error(t, err)
+
+	fields, ok := validator.ExtractFields(newTranslator(t, "en"), "en", err)
+	require.True(t, ok, "校验错误必须能提取字段明细")
+	assert.NotEmpty(t, fields["pageSize"], "标签校验的字段明细不得丢失")
+	assert.Equal(t, []string{"disallowed sort column: hacked"}, fields["sort"], "钩子校验的字段明细不得被遮蔽")
+}
+
+// TestTagValidationOnlyReportsTagField 校验仅标签失败时的既有行为不变。
+func TestTagValidationOnlyReportsTagField(t *testing.T) {
+	t.Parallel()
+
+	err := validator.NewFiberValidator().Validate(mergeProbe{PageSize: 999})
+	require.Error(t, err)
+
+	fields, ok := validator.ExtractFields(newTranslator(t, "en"), "en", err)
+	require.True(t, ok)
+	assert.NotEmpty(t, fields["pageSize"])
+	assert.Empty(t, fields["sort"])
+}
+
+// TestHookValidationOnlyReportsHookField 校验仅钩子失败时仍返回携带字段明细的业务校验错误。
+func TestHookValidationOnlyReportsHookField(t *testing.T) {
+	t.Parallel()
+
+	err := validator.NewFiberValidator().Validate(mergeProbe{PageSize: 10, Sort: "hacked"})
+	require.Error(t, err)
+
+	bizErr, ok := errs.As(err)
+	require.True(t, ok, "仅钩子失败时应直接返回业务校验错误")
+	assert.Equal(t, string(errs.CodeValidationFailed), string(bizErr.Code()))
+	assert.Equal(t, []string{"disallowed sort column: hacked"}, bizErr.Fields()["sort"])
+}
+
 // bindOptionalJSON 模拟空体可选绑定在 Fiber 真实链路下的行为。
 func bindOptionalJSON(t *testing.T, body string, target any) error {
 	t.Helper()
@@ -480,7 +534,7 @@ func (f *plainErrorForm) Validate() error {
 	return nil
 }
 
-// TestValidatableInterface 验证 DTO 自校验 Validatable 接口与短路逻辑。
+// TestValidatableInterface 验证 DTO 自校验 Validatable 接口与标签/钩子明细的合并上报。
 func TestValidatableInterface(t *testing.T) {
 	require.NoError(t, validator.InitEngine())
 
@@ -492,13 +546,20 @@ func TestValidatableInterface(t *testing.T) {
 		assert.True(t, hookRun)
 	})
 
-	t.Run("基础标签校验未通过时 Fail-Fast 短路，不触发 Validate", func(t *testing.T) {
+	t.Run("基础标签校验未通过时仍上报标签字段明细", func(t *testing.T) {
 		hookRun := false
-		// StartTime 为 0，不满足 min=1
+		// StartTime 为 0，不满足 min=1。
+		// 标签校验不再短路 Validatable 钩子：两者分别产出的字段明细必须合并上报，
+		// 否则 pageSize 越界之类的标签错误会整体遮蔽 sort 白名单之类的命令式校验结果。
 		form := complexRangeForm{StartTime: 0, EndTime: 20, hookRun: &hookRun}
 		err := validator.NewFiberValidator().Validate(&form)
 		require.Error(t, err)
-		assert.False(t, hookRun, "Fail-Fast 保证在 tag 失败时不触发 Validate 钩子")
+
+		fields, ok := validator.ExtractFields(newTranslator(t, "en"), "en", err)
+		require.True(t, ok)
+		assert.NotEmpty(t, fields["startTime"], "标签校验的字段明细不得丢失")
+		assert.Empty(t, fields["endTime"], "钩子本次通过，不应产生字段明细")
+		assert.True(t, hookRun, "标签校验失败不再短路钩子")
 	})
 
 	t.Run("基础标签通过但 Validate 返回 errs.Error 携带字段明细", func(t *testing.T) {

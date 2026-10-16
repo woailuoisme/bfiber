@@ -6,6 +6,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -112,6 +113,86 @@ func TestMapNoRows(t *testing.T) {
 		assert.Equal(t, http.StatusNotFound, status)
 		assert.Equal(t, string(errs.CodeNotFound), resp.Code)
 	}
+}
+
+// TestFrom 校验 From 在包装阶段就完成归一：无记录走 fallback，其余一律 500。
+// 若不归一，Internal 会先把底层错误包成 *Error，Render 对 *Error 的匹配早于 sql.ErrNoRows，
+// "记录不存在"就会被渲染成 500。
+func TestFrom(t *testing.T) {
+	tests := []struct {
+		name       string
+		cause      error
+		wantStatus int
+		wantCode   errs.Code
+		wantMsg    string
+	}{
+		{"sql 无记录", sql.ErrNoRows, http.StatusNotFound, errs.CodeNotFound, "The requested user does not exist"},
+		{"pgx 无记录", pgx.ErrNoRows, http.StatusNotFound, errs.CodeNotFound, "The requested user does not exist"},
+		{"包裹的无记录", fmt.Errorf("query failed: %w", sql.ErrNoRows), http.StatusNotFound, errs.CodeNotFound, "The requested user does not exist"},
+		{"仅文案相同的错误", errors.New("sql: no rows in result set"), http.StatusInternalServerError, errs.CodeInternal, msgInternal},
+		{"其余错误", errors.New("connection reset"), http.StatusInternalServerError, errs.CodeInternal, msgInternal},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			err := errs.From(tc.cause, errs.UserNotFound())
+			require.Error(t, err)
+
+			status, resp := errs.Map(err)
+			assert.Equal(t, tc.wantStatus, status)
+			assert.Equal(t, string(tc.wantCode), resp.Code)
+			assert.Equal(t, tc.wantMsg, resp.Message)
+		})
+	}
+}
+
+// TestFromKeepsFallbackSemantics 校验 fallback 的语义错误码被原样保留，不被 Internal 覆盖。
+func TestFromKeepsFallbackSemantics(t *testing.T) {
+	status, resp := errs.Map(errs.From(sql.ErrNoRows, errs.TokenInvalid()))
+	assert.Equal(t, http.StatusUnauthorized, status)
+	assert.Equal(t, string(errs.CodeAuthTokenInvalid), resp.Code)
+	assert.Equal(t, "The token is invalid", resp.Message)
+}
+
+// TestFromBoundaryValues 校验 From 的两个边界语义。
+// 若 From(nil, ...) 返回非 nil，"成功路径直接 return errs.From(err, ...)" 就会把成功渲染成 500；
+// 若 fallback 为 nil 时返回 nil，"记录不存在"就会让调用方以 200 返回零值对象。
+func TestFromBoundaryValues(t *testing.T) {
+	t.Run("无错误返回 nil", func(t *testing.T) {
+		assert.Nil(t, errs.From(nil, errs.UserNotFound()))
+	})
+
+	t.Run("缺省 fallback 回落到通用 404", func(t *testing.T) {
+		err := errs.From(sql.ErrNoRows, nil)
+		require.Error(t, err)
+
+		status, resp := errs.Map(err)
+		assert.Equal(t, http.StatusNotFound, status)
+		assert.Equal(t, string(errs.CodeNotFound), resp.Code)
+		assert.NotEmpty(t, resp.Message, "回落文案不得为空")
+	})
+}
+
+// TestAsIgnoresTypedNil 校验值为 nil 的 *Error 不被识别为业务错误。
+// 它一旦从返回 error 的函数中透出，就是"接口非 nil、内部为空"的陷阱：调用方会走到错误分支，
+// 而 Render 直接解引用其字段就会 panic。
+func TestAsIgnoresTypedNil(t *testing.T) {
+	var typedNil *errs.Error
+
+	bizErr, ok := errs.As(typedNil)
+	assert.False(t, ok)
+	assert.Nil(t, bizErr)
+
+	status, resp := errs.Map(typedNil)
+	assert.Equal(t, http.StatusInternalServerError, status)
+	assert.Equal(t, string(errs.CodeInternal), resp.Code)
+}
+
+// TestIsNoRows 校验 IsNoRows 同时识别两种驱动的"记录不存在"信号，且不误判其他错误。
+func TestIsNoRows(t *testing.T) {
+	assert.True(t, errs.IsNoRows(sql.ErrNoRows))
+	assert.True(t, errs.IsNoRows(pgx.ErrNoRows))
+	assert.False(t, errs.IsNoRows(errors.New("boom")))
+	assert.False(t, errs.IsNoRows(nil))
 }
 
 // TestMapContextCanceled 校验 context.Canceled 与客户端主动取消映射为 499 CLIENT_CLOSED_REQUEST。

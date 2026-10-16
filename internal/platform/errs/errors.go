@@ -2,10 +2,12 @@ package errs
 
 import (
 	"cmp"
+	"database/sql"
 	"errors"
 	"fmt"
 
 	"github.com/gofiber/fiber/v3"
+	"github.com/jackc/pgx/v5"
 	"github.com/samber/oops"
 )
 
@@ -23,7 +25,10 @@ const (
 	msgGatewayTimeout      = "The request timed out while waiting for a response"
 	msgClientClosedRequest = "Client closed request"
 	msgInvalidLogin        = "Invalid email or password"
+	msgPasswordMismatch    = "The current password is incorrect"
 	msgUnauthorized        = "Authentication is required"
+	msgTokenInvalid        = "The token is invalid"
+	msgUserNotFound        = "The requested user does not exist"
 	msgServiceUnavailable  = "Service is temporarily unavailable"
 )
 
@@ -36,10 +41,22 @@ type Error struct {
 }
 
 // Error 实现 error 接口，返回面向调用方的文案。
-func (e *Error) Error() string { return e.message }
+// 空接收者返回空串：值为 nil 的 *Error 一旦被装箱进 error 接口，任何日志打印都会落到这里。
+func (e *Error) Error() string {
+	if e == nil {
+		return ""
+	}
+	return e.message
+}
 
 // Unwrap 暴露底层错误，使 errors.Is/As 可以继续向下匹配。
-func (e *Error) Unwrap() error { return e.cause }
+// 空接收者返回 nil：errors.Is/As 会遍历错误链上的每个节点，此处不设防会让整条链的遍历 panic。
+func (e *Error) Unwrap() error {
+	if e == nil {
+		return nil
+	}
+	return e.cause
+}
 
 // Code 返回错误码。
 func (e *Error) Code() Code { return e.code }
@@ -158,11 +175,50 @@ func ServiceUnavailable(message string) *Error {
 // InvalidCredentials 是登录失败的唯一对外口径，不区分"邮箱不存在"与"密码错误"。
 func InvalidCredentials() *Error { return New(CodeAuthInvalidCredentials, msgInvalidLogin) }
 
+// PasswordMismatch 构造 422，表示需要核验的当前口令不正确。
+func PasswordMismatch() *Error { return New(CodeAuthPasswordMismatch, msgPasswordMismatch) }
+
 // Unauthorized 构造 401，用于凭证缺失、格式错误、过期或已撤销。
 func Unauthorized(code Code, message string) *Error { return New(code, message) }
 
+// TokenInvalid 构造 401，表示令牌本身有效但指向的主体已不存在。
+func TokenInvalid() *Error { return Unauthorized(CodeAuthTokenInvalid, msgTokenInvalid) }
+
+// AuthenticationRequired 构造 401，表示请求缺少可用凭证（未携带、格式错误或无法解析）。
+//
+// 与 TokenInvalid 共用 AUTH_TOKEN_INVALID 码是刻意的：api.md 用该码定义"未通过认证"这一族 401，
+// 客户端据此触发重新登录；为"凭证缺失"另立新码会同时改动契约与既有客户端的判定分支。
+// 两者的区别只在文案：缺失讲"需要认证"，失效讲"令牌无效"。
+func AuthenticationRequired() *Error {
+	return Unauthorized(CodeAuthTokenInvalid, msgUnauthorized)
+}
+
+// UserNotFound 构造 404，表示目标用户不存在（对外不区分内部原因）。
+func UserNotFound() *Error { return NotFound(msgUserNotFound) }
+
 // Internal 把未预期错误收敛为 500；原始错误只进日志，绝不进响应体。
 func Internal(cause error) *Error { return Wrap(CodeInternal, msgInternal, cause) }
+
+// IsNoRows 判断错误链中是否包含"记录不存在"信号（database/sql 与 pgx 两种驱动口径）。
+func IsNoRows(err error) bool {
+	return errors.Is(err, sql.ErrNoRows) || errors.Is(err, pgx.ErrNoRows)
+}
+
+// From 把数据层错误归一为对外语义错误：无错误返回 nil，无记录返回 noRows，其余一律 500。
+// noRows 为 nil 时回落到通用 404——否则"无记录"会变成 nil 错误，让调用方以 200 返回零值对象。
+//
+// 之所以必须在此处归一，而不是依赖 Render 的映射优先级：Internal 会先把底层错误包成
+// *Error，而 Render 对 *Error 的匹配早于 sql.ErrNoRows，未归一就会把"记录不存在"渲染成 500。
+func From(cause error, noRows *Error) *Error {
+	switch {
+	case cause == nil:
+		return nil
+	case IsNoRows(cause):
+		return cmp.Or(noRows, NotFound(""))
+	default:
+		return Internal(cause)
+	}
+}
 
 // Validation 构造 422，fields 为按字段路径归集的校验失败文案。
 func Validation(fields map[string][]string) *Error {
@@ -172,8 +228,11 @@ func Validation(fields map[string][]string) *Error {
 }
 
 // As 从错误链中提取 *Error，是 errors.AsType 的语义化封装。
+// 值为 nil 的 *Error 视为未命中：它一旦从返回 error 的函数中透出，就会是"接口非 nil 但内部为空"的陷阱，
+// 直接解引用会导致 panic。
 func As(err error) (*Error, bool) {
-	return errors.AsType[*Error](err)
+	bizErr, ok := errors.AsType[*Error](err)
+	return bizErr, ok && bizErr != nil
 }
 
 // Stack 提取错误链中的 oops 堆栈文本，非 oops 错误返回空串。

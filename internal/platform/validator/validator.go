@@ -34,6 +34,10 @@ func init() {
 }
 
 // Validatable 是支持 DTO 自校验与跨字段复合校验的接口契约。
+//
+// 契约要求：实现必须在字段不完整（甚至标签校验已失败）时也能安全求值——
+// 标签校验不会短路本钩子，否则钩子上报的字段明细会被标签错误整体遮蔽。
+// 因此钩子只应读取字段并返回错误映射，不得假设入参已通过标签校验、不得产生副作用。
 type Validatable interface {
 	Validate() error
 }
@@ -60,6 +64,8 @@ func NewFiberValidator() *FiberValidator {
 // Error 封装结构体校验产生的字段错误明细，解耦上层与具体第三方校验器实现。
 type Error struct {
 	valErr govalidator.ValidationErrors
+	// extra 承载 Validatable 钩子上报的字段明细；其文案已是最终对外文案，无需再次翻译。
+	extra map[string][]string
 }
 
 func (e *Error) Error() string {
@@ -85,22 +91,17 @@ func (e *Error) ValidationErrors() govalidator.ValidationErrors {
 	return e.valErr
 }
 
-// Translate 按指定语言将错误渲染为字段映射字典。
+// Translate 按指定语言将错误渲染为字段映射字典，并合并 Validatable 钩子上报的明细。
 func (e *Error) Translate(translator *i18n.Translator, language string) map[string][]string {
 	if e == nil {
 		return nil
 	}
-	return Translate(translator, language, e.valErr)
-}
 
-func wrapStructError(err error) error {
-	if err == nil {
-		return nil
+	fields := Translate(translator, language, e.valErr)
+	for field, messages := range e.extra {
+		fields[field] = append(fields[field], messages...)
 	}
-	if valErr, ok := errors.AsType[govalidator.ValidationErrors](err); ok {
-		return &Error{valErr: valErr}
-	}
-	return err
+	return fields
 }
 
 // Validate 实现 Fiber v3 StructValidator 接口契约，执行结构体标签校验与 Validatable 接口回调。
@@ -108,12 +109,42 @@ func (fv *FiberValidator) Validate(out any) error {
 	if out == nil {
 		return nil
 	}
+
+	var tagErr *Error
 	if fv.engine != nil {
 		if err := fv.engine.Struct(out); err != nil {
-			return wrapStructError(err)
+			valErr, ok := errors.AsType[govalidator.ValidationErrors](err)
+			if !ok {
+				return err
+			}
+			tagErr = &Error{valErr: valErr}
 		}
 	}
-	return checkValidatable(out)
+
+	hookErr := checkValidatable(out)
+
+	switch {
+	case tagErr == nil:
+		return hookErr
+	case hookErr == nil:
+		return tagErr
+	}
+
+	// 标签校验与 Validatable 钩子可能同时失败（如 pageSize 越界叠加 sort 不在白名单）。
+	// 两者都须上报，否则钩子校验出的字段明细会被标签错误整体遮蔽。
+	if extra := hookFields(hookErr); len(extra) > 0 {
+		return &Error{valErr: tagErr.valErr, extra: extra}
+	}
+	// 钩子错误不携带字段明细时无法与标签明细合并表达，以钩子自身为准。
+	return hookErr
+}
+
+// hookFields 提取 Validatable 钩子错误中按字段路径归集的明细，无明细时返回 nil。
+func hookFields(err error) map[string][]string {
+	if bizErr, ok := errs.As(err); ok {
+		return bizErr.Fields()
+	}
+	return nil
 }
 
 // Engine 返回底层验证器引擎实例。

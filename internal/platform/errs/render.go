@@ -3,7 +3,6 @@ package errs
 import (
 	"cmp"
 	"context"
-	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -14,7 +13,6 @@ import (
 	"strings"
 
 	"github.com/gofiber/fiber/v3"
-	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/samber/oops"
 	"github.com/valyala/fasthttp"
@@ -200,7 +198,7 @@ func Map(err error) (int, Response) {
 		return mapPgError(pgErr)
 	}
 
-	if errors.Is(err, sql.ErrNoRows) || errors.Is(err, pgx.ErrNoRows) {
+	if IsNoRows(err) {
 		return fiber.StatusNotFound, Response{Code: string(CodeNotFound), Message: msgNotFound}
 	}
 
