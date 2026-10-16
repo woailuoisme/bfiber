@@ -396,8 +396,6 @@ github.com/puzpuzpuz/xsync/v3 v3.5.1 h1:GJYJZwO6IdxN/IKbneznS6yPkVC+c3zyY/j19c++
 github.com/puzpuzpuz/xsync/v3 v3.5.1/go.mod h1:VjzYrABPabuM4KyBh1Ftq6u8nhwY5tBPKP9jpmh0nnA=
 github.com/redis/go-redis/v9 v9.23.0 h1:/TTVdJa8BRNsybwwGGnmiYktHNlUXtbOQxlWpHBPL3s=
 github.com/redis/go-redis/v9 v9.23.0/go.mod h1:EWP2UUk+XDaI1s5nQB5mablZN6vccXlmBQTyfnF87D0=
-github.com/redis/rueidis v1.0.78 h1:hJXpEgC9IYfdwY4hCdaGYsfK+oUaAqvhI/GMy5akVJI=
-github.com/redis/rueidis v1.0.78/go.mod h1:L8mnCQJJaSNL6I4pIR6Rz732HTGS9vmuXm0yT9dRvjo=
 github.com/redis/rueidis v1.0.79 h1:2faCYvkq0G8ozDIAn7+3d5k5bBYCc0DBG2THK5WYXF0=
 github.com/redis/rueidis v1.0.79/go.mod h1:L8mnCQJJaSNL6I4pIR6Rz732HTGS9vmuXm0yT9dRvjo=
 github.com/resend/resend-go/v2 v2.28.0 h1:ttM1/VZR4fApBv3xI1TneSKi1pbfFsVrq7fXFlHKtj4=
@@ -565,8 +563,6 @@ go.opentelemetry.io/proto/otlp v1.11.0 h1:5rrYs0Ykyj50sdU/JU0x8etU+LubXWb+gED6Tb
 go.opentelemetry.io/proto/otlp v1.11.0/go.mod h1:SmVizdCOAm3XBtG1g1NnOdhW6jtddT72hLMhv8VwA8E=
 go.temporal.io/api v1.63.5 h1:c11+kPYHkXXL3UiShPdbMD+xtvqGsbTibUA9ypmiCa4=
 go.temporal.io/api v1.63.5/go.mod h1:SrlW2JMwVlDP4nRWSNznUFqnSHd+YeMDS1BkYo63HCQ=
-go.temporal.io/sdk v1.49.0 h1:CtGI0BUe/SCo3eoqTwuWWtXKueii9GBVus7KrKKH1Vo=
-go.temporal.io/sdk v1.49.0/go.mod h1:xP0FulN5JJSfisESUP60LlWsrKz2tLSStGjVdk8r5cc=
 go.temporal.io/sdk v1.50.0 h1:voD61vs0hfxXOI+evJ/rMdExDYf+I+YLhoawhwf1LVU=
 go.temporal.io/sdk v1.50.0/go.mod h1:xP0FulN5JJSfisESUP60LlWsrKz2tLSStGjVdk8r5cc=
 go.temporal.io/sdk/contrib/opentelemetry v0.8.1 h1:wmQnxBWUsQQN6QihaEuUmsn8ZK6d+2G9oQF5bN4ObiY=
