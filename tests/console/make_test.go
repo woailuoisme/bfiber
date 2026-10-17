@@ -95,10 +95,10 @@ func TestGenerateCRUD_Execution(t *testing.T) {
 		RootDir:     tempDir,
 	}
 
-	// 1. 初次生成
+	// 1. 初次生成（包含 5 个常规文件 + schema + factory + seeder = 8 个文件）
 	results, err := core.GenerateCRUD(opts)
 	require.NoError(t, err)
-	require.Len(t, results, 5)
+	require.Len(t, results, 8)
 
 	for _, r := range results {
 		assert.Equal(t, core.ActionCreated, r.Action)
@@ -113,6 +113,21 @@ func TestGenerateCRUD_Execution(t *testing.T) {
 	}
 
 	// 2. 校验特定关键代码模式
+	schemaPath := filepath.Join(tempDir, "internal", "database", "schemas", "01-article.sql")
+	schemaContent, err := os.ReadFile(schemaPath)
+	require.NoError(t, err)
+	assert.Contains(t, string(schemaContent), `CREATE TABLE "articles"`)
+
+	factoryPath := filepath.Join(tempDir, "internal", "database", "factories", "article_factory.go")
+	factoryContent, err := os.ReadFile(factoryPath)
+	require.NoError(t, err)
+	assert.Contains(t, string(factoryContent), "type ArticleFactory struct")
+
+	seederPath := filepath.Join(tempDir, "internal", "database", "seeders", "article_seeder.go")
+	seederContent, err := os.ReadFile(seederPath)
+	require.NoError(t, err)
+	assert.Contains(t, string(seederContent), "type ArticleSeeder struct")
+
 	dtoPath := filepath.Join(tempDir, "internal", "features", "admin", "article", "dto.go")
 	dtoContent, err := os.ReadFile(dtoPath)
 	require.NoError(t, err)
@@ -153,19 +168,21 @@ func TestGenerateCRUD_Execution(t *testing.T) {
 	assert.Contains(t, string(serviceContent), "pagination.Normalise()")
 	assert.NotContains(t, string(serviceContent), "models.CountArticles(")
 
-	// 3. 不带 force 再次生成，应当被全部跳过
+	// 3. 不带 force 再次生成：
+	// 此时 schema 文件已存在于磁盘，CRUD 生成管线自动激活防误触保护（SchemaExists=true），
+	// 故后续生成/跳过/覆盖为 7 个代码文件
 	results2, err := core.GenerateCRUD(opts)
 	require.NoError(t, err)
-	require.Len(t, results2, 5)
+	require.Len(t, results2, 7)
 	for _, r := range results2 {
 		assert.Equal(t, core.ActionSkipped, r.Action)
 	}
 
-	// 4. 携带 force 标志再次生成，应当覆盖
+	// 4. 携带 force 标志再次生成，应当覆盖代码文件
 	opts.Force = true
 	results3, err := core.GenerateCRUD(opts)
 	require.NoError(t, err)
-	require.Len(t, results3, 5)
+	require.Len(t, results3, 7)
 	for _, r := range results3 {
 		assert.Equal(t, core.ActionOverwritten, r.Action)
 	}
@@ -174,7 +191,7 @@ func TestGenerateCRUD_Execution(t *testing.T) {
 	opts.DryRun = true
 	results4, err := core.GenerateCRUD(opts)
 	require.NoError(t, err)
-	require.Len(t, results4, 5)
+	require.Len(t, results4, 7)
 	for _, r := range results4 {
 		assert.Equal(t, core.ActionDryRun, r.Action)
 	}
@@ -210,16 +227,18 @@ func TestDestroyCRUD_Execution(t *testing.T) {
 		RootDir:     tempDir,
 	}
 
-	// 1. 先生成文件
+	// 1. 先生成文件（全新模块生成 8 个文件，含 schema DDL）
 	results, err := core.GenerateCRUD(opts)
 	require.NoError(t, err)
-	require.Len(t, results, 5)
+	require.Len(t, results, 8)
 
-	// 2. Dry-run 回退删除
+	// 2. Dry-run 回退删除：
+	// Schema DDL 作为数据库模式事实源受到持久化保护（SchemaExists=true），
+	// 不会被 CRUD 销毁管线误删，故待删除文件为 7 个代码文件。
 	opts.DryRun = true
 	destroyDryRun, err := core.DestroyCRUD(opts)
 	require.NoError(t, err)
-	require.Len(t, destroyDryRun, 5)
+	require.Len(t, destroyDryRun, 7)
 	for _, r := range destroyDryRun {
 		assert.Equal(t, core.ActionDryRun, r.Action)
 	}
@@ -233,17 +252,22 @@ func TestDestroyCRUD_Execution(t *testing.T) {
 	opts.DryRun = false
 	destroyResults, err := core.DestroyCRUD(opts)
 	require.NoError(t, err)
-	require.Len(t, destroyResults, 5)
+	require.Len(t, destroyResults, 7)
 	for _, r := range destroyResults {
 		assert.Equal(t, core.ActionDeleted, r.Action)
 	}
 
-	// 验证生成的文件已被物理删除
+	// 验证生成的代码文件已被物理删除
 	for _, r := range destroyResults {
 		fullPath := filepath.Join(tempDir, r.Path)
 		_, statErr := os.Stat(fullPath)
 		assert.True(t, os.IsNotExist(statErr), "File should be deleted: "+fullPath)
 	}
+
+	// 验证 Schema DDL 作为数据库事实源被安全保留
+	schemaPath := filepath.Join(tempDir, "internal", "database", "schemas", "01-article.sql")
+	_, schemaStatErr := os.Stat(schemaPath)
+	require.NoError(t, schemaStatErr, "Schema DDL should be preserved as source of truth")
 
 	// 验证空的 feature 目录也被清理
 	featureDir := filepath.Join(tempDir, "internal", "features", "admin", "article")
@@ -253,7 +277,7 @@ func TestDestroyCRUD_Execution(t *testing.T) {
 	// 4. 重复执行回退删除，应安全跳过（ActionSkipped）
 	destroyAgain, err := core.DestroyCRUD(opts)
 	require.NoError(t, err)
-	require.Len(t, destroyAgain, 5)
+	require.Len(t, destroyAgain, 7)
 	for _, r := range destroyAgain {
 		assert.Equal(t, core.ActionSkipped, r.Action)
 	}
@@ -284,4 +308,137 @@ func TestMakeDestroyCommand_CLIExecution(t *testing.T) {
 	// 5. 缺少必填参数时在非 TTY 下应报错
 	err = console.Execute(ctx, []string{"make:crud", "-d"})
 	require.Error(t, err)
+}
+
+// TestMakeSubCommands_CLIExecution 验证 make:schema, make:factory, make:seeder 独立 CLI 命令。
+func TestMakeSubCommands_CLIExecution(t *testing.T) {
+	ctx := context.Background()
+
+	// 1. 测试 make:schema
+	err := console.Execute(ctx, []string{"make:schema", "product", "--dry-run"})
+	require.NoError(t, err)
+	err = console.Execute(ctx, []string{"make:schema"})
+	require.Error(t, err)
+
+	// 2. 测试 make:factory
+	err = console.Execute(ctx, []string{"make:factory", "product", "--dry-run"})
+	require.NoError(t, err)
+	err = console.Execute(ctx, []string{"make:factory"})
+	require.Error(t, err)
+
+	// 3. 测试 make:seeder
+	err = console.Execute(ctx, []string{"make:seeder", "product", "--dry-run"})
+	require.NoError(t, err)
+	err = console.Execute(ctx, []string{"make:seeder"})
+	require.Error(t, err)
+}
+
+// TestGenerateSchemaFactorySeeder_Execution 验证单独生成器在临时目录下的独立创建、覆盖与跳过闭环。
+func TestGenerateSchemaFactorySeeder_Execution(t *testing.T) {
+	tempDir := t.TempDir()
+
+	opts := core.GeneratorOptions{
+		Name:        "order",
+		ChineseName: "订单",
+		RootDir:     tempDir,
+	}
+
+	// 1. 测试 GenerateSchema
+	schemaRes, err := core.GenerateSchema(opts)
+	require.NoError(t, err)
+	require.Len(t, schemaRes, 1)
+	assert.Equal(t, core.ActionCreated, schemaRes[0].Action)
+
+	schemaPath := filepath.Join(tempDir, schemaRes[0].Path)
+	schemaContent, err := os.ReadFile(schemaPath)
+	require.NoError(t, err)
+	assert.Contains(t, string(schemaContent), `CREATE TABLE "orders"`)
+
+	// 再次生成未带 force 应跳过
+	schemaRes2, err := core.GenerateSchema(opts)
+	require.NoError(t, err)
+	assert.Equal(t, core.ActionSkipped, schemaRes2[0].Action)
+
+	// 2. 测试 GenerateFactory
+	factoryRes, err := core.GenerateFactory(opts)
+	require.NoError(t, err)
+	require.Len(t, factoryRes, 1)
+	assert.Equal(t, core.ActionCreated, factoryRes[0].Action)
+
+	factoryPath := filepath.Join(tempDir, factoryRes[0].Path)
+	factoryContent, err := os.ReadFile(factoryPath)
+	require.NoError(t, err)
+	assert.Contains(t, string(factoryContent), "type OrderFactory struct")
+	assert.Contains(t, string(factoryContent), "package factories")
+
+	// 3. 测试 GenerateSeeder
+	seederRes, err := core.GenerateSeeder(opts)
+	require.NoError(t, err)
+	require.Len(t, seederRes, 1)
+	assert.Equal(t, core.ActionCreated, seederRes[0].Action)
+
+	seederPath := filepath.Join(tempDir, seederRes[0].Path)
+	seederContent, err := os.ReadFile(seederPath)
+	require.NoError(t, err)
+	assert.Contains(t, string(seederContent), "type OrderSeeder struct")
+	assert.Contains(t, string(seederContent), "package seeders")
+}
+
+// TestSeederInjector_Lifecycle 验证 Seeder 自动注入与移除的生命周期及幂等性。
+func TestSeederInjector_Lifecycle(t *testing.T) {
+	tempDir := t.TempDir()
+	seedersDir := filepath.Join(tempDir, "internal", "database", "seeders")
+	require.NoError(t, os.MkdirAll(seedersDir, 0o755))
+
+	mockSeederFile := filepath.Join(seedersDir, "database_seeder.go")
+	initialContent := `package seeders
+
+import (
+	"context"
+	"bfiber/internal/platform/seeder"
+)
+
+type DatabaseSeeder struct{}
+
+func (s *DatabaseSeeder) Run(ctx context.Context, runner *seeder.Runner) error {
+	return runner.Call(ctx,
+		&AdminUserSeeder{},
+	)
+}
+`
+	require.NoError(t, os.WriteFile(mockSeederFile, []byte(initialContent), 0o644))
+
+	opts := core.GeneratorOptions{
+		Name:    "article",
+		RootDir: tempDir,
+	}
+
+	// 1. 初次注入
+	injected, err := core.InjectSeeder(tempDir, opts)
+	require.NoError(t, err)
+	assert.True(t, injected)
+
+	content1, err := os.ReadFile(mockSeederFile)
+	require.NoError(t, err)
+	assert.Contains(t, string(content1), "&ArticleSeeder{},")
+
+	// 2. 重复注入验证幂等性
+	injected2, err := core.InjectSeeder(tempDir, opts)
+	require.NoError(t, err)
+	assert.False(t, injected2, "Duplicate injection should return false")
+
+	// 3. 执行移除
+	removed, err := core.RemoveSeeder(tempDir, opts)
+	require.NoError(t, err)
+	assert.True(t, removed)
+
+	content2, err := os.ReadFile(mockSeederFile)
+	require.NoError(t, err)
+	assert.NotContains(t, string(content2), "&ArticleSeeder{},")
+	assert.Contains(t, string(content2), "&AdminUserSeeder{},")
+
+	// 4. 重复移除验证幂等性
+	removed2, err := core.RemoveSeeder(tempDir, opts)
+	require.NoError(t, err)
+	assert.False(t, removed2, "Duplicate removal should return false")
 }

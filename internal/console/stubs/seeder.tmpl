@@ -1,0 +1,103 @@
+package seeders
+
+import (
+	"cmp"
+	"context"
+	"fmt"
+
+	"github.com/uptrace/bun"
+	"go.uber.org/zap"
+
+	"bfiber/internal/config"
+	"bfiber/internal/database"
+	"bfiber/internal/database/factories"
+	"bfiber/internal/database/models"
+	"bfiber/internal/platform/logger"
+)
+
+func init() {
+	Register(&{{.PascalName}}Seeder{})
+}
+
+// {{.PascalName}}Seeder 负责研发与测试环境的{{.ChineseName}}数据批量播种。
+type {{.PascalName}}Seeder struct {
+	Count int // 自定义播种数量，默认 20 条
+	// Cfg 为可选的配置注入，缺省时自行装载；仅用于生产环境守卫。
+	Cfg *config.Config
+}
+
+// Name 返回播种器在注册表中的唯一名称。
+func (s *{{.PascalName}}Seeder) Name() string {
+	return "{{.PascalName}}Seeder"
+}
+
+// Seed 执行{{.ChineseName}}数据播种流程。
+func (s *{{.PascalName}}Seeder) Seed(ctx context.Context, db *bun.DB) error {
+	log := logger.FromContext(ctx)
+
+	cfg := s.Cfg
+	if cfg == nil {
+		loaded, err := config.Load()
+		if err != nil {
+			return fmt.Errorf("{{.SnakeName}} seeder load config failed: %w", err)
+		}
+		cfg = loaded
+	}
+
+	// 演示数据仅在开发与测试环境中播种，生产环境中直接跳过
+	if cfg.IsProduction() {
+		log.Warn("demo {{.SnakeName}} seeding is disabled in production, skipped")
+		return nil
+	}
+
+	total := cmp.Or(s.Count, 20)
+	log.Info("batch generating test {{.PluralSnake}} via {{.PascalName}}Factory...", zap.Int("count", total))
+
+	conn := database.ResolveDB(ctx, db)
+
+	// 1. 幂等插入基准演示数据（若表中暂无任何数据）
+	exists, err := conn.NewSelect().
+		Model((*models.{{.PascalName}})(nil)).
+		Limit(1).
+		Exists(ctx)
+	if err != nil {
+		return fmt.Errorf("{{.SnakeName}} seeder check existing data failed: %w", err)
+	}
+
+	if !exists {
+		_, err := factories.{{.PascalName}}(conn).
+			Create(ctx)
+		if err != nil {
+			return fmt.Errorf("{{.SnakeName}} seeder create benchmark sample failed: %w", err)
+		}
+		log.Info("benchmark demo {{.SnakeName}} seeded")
+	}
+
+	// 2. 批量生成拟真数据集，适配分块持久化与控制台进度条
+	subHook := SubProgressHookFromContext(ctx)
+	if subHook != nil {
+		subHook(0, int64(total))
+	}
+
+	factory := factories.{{.PascalName}}(conn).
+		ChunkSize(500)
+	if subHook != nil {
+		factory = factory.OnProgress(func(current, _ int) {
+			subHook(int64(current), int64(total))
+		})
+	}
+
+	if total > 0 {
+		_, err = factory.CreateMany(ctx, total)
+		if err != nil {
+			return fmt.Errorf("{{.SnakeName}} seeder batch create failed: %w", err)
+		}
+	}
+
+	if subHook != nil {
+		subHook(int64(total), int64(total))
+	}
+
+	log.Info("batch {{.SnakeName}} seeding completed", zap.Int("total", total))
+	return nil
+}

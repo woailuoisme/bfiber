@@ -4,8 +4,15 @@ import (
 	"strings"
 	"time"
 
-	"bfiber/internal/platform/response"
+{{- if .HasDecimal }}
+	"github.com/shopspring/decimal"
+{{- end }}
+
 	"bfiber/internal/database/models"
+{{- if .HasGeo }}
+	"bfiber/internal/platform/pgtype/geo"
+{{- end }}
+	"bfiber/internal/platform/response"
 )
 
 // {{ .PascalName }}PathParams 路径中的{{ .ChineseName }}唯一标识。
@@ -22,8 +29,8 @@ type List{{ .PascalName }}QueryParams struct {
 	PageSize int `form:"pageSize" json:"pageSize" example:"20" validate:"omitempty,min=1,max=100"`
 	// 关键字搜索
 	Search string `form:"search" json:"search" example:"{{ .PascalName }}" validate:"omitempty,max=100"`
-	// 状态过滤 (active: 正常, inactive: 停用)
-	Status string `form:"status" json:"status" example:"active" enums:"active,inactive" validate:"omitempty,oneof=active inactive"`
+	// 状态过滤 ({{ .StatusEnumStr }})
+	Status string `form:"status" json:"status" example:"{{ .DefaultStatus }}" validate:"omitempty,oneof={{ .StatusEnumStr }}"`
 	// 排序规则 (字段名前加 - 表示倒序，如: -createdAt, createdAt)
 	Sort string `form:"sort" json:"sort" example:"-createdAt" validate:"omitempty,max=50"`
 }
@@ -43,35 +50,102 @@ func (q *List{{ .PascalName }}QueryParams) Normalize() {
 
 // Create{{ .PascalName }}Body 创建{{ .ChineseName }}请求载荷。
 type Create{{ .PascalName }}Body struct {
+{{- if .HasCustomFields }}
+{{- range .CustomFields }}
+{{- if .Comment }}
+	// {{ .Comment }}
+{{- end }}
+{{- if eq .ColName "status" }}
+	Status string `json:"status" example:"{{ $.DefaultStatus }}" validate:"omitempty,oneof={{ $.StatusEnumStr }}"`
+{{- else if .IsComplexType }}
+	{{ .PascalName }} {{ .DTOGoType }} `json:"{{ .CamelName }},omitempty"`
+{{- else if .IsNullable }}
+	{{ .PascalName }} {{ .DTOGoTypePtr }} `json:"{{ .CamelName }},omitempty" example:"{{ .ExampleValue }}" validate:"omitempty"`
+{{- else }}
+	{{ .PascalName }} {{ .DTOGoType }} `json:"{{ .CamelName }}" example:"{{ .ExampleValue }}" {{ .ValidateTag }}`
+{{- end }}
+{{- end }}
+{{- else }}
 	// 业务名称
 	Name string `json:"name" example:"示例名称" validate:"required,min=1,max=100"`
 	// 详细描述
 	Description string `json:"description" example:"这是详细的业务描述" validate:"omitempty,max=500"`
 	// 状态 (active: 正常, inactive: 停用)
 	Status string `json:"status" example:"active" enums:"active,inactive" validate:"omitempty,oneof=active inactive"`
+{{- end }}
 }
 
 // Normalize 规范化创建入参。
 func (b *Create{{ .PascalName }}Body) Normalize() {
+{{- if .HasCustomFields }}
+{{- range .CustomFields }}
+{{- if eq .ColName "status" }}
+	if b.Status == "" {
+		b.Status = "{{ $.DefaultStatus }}"
+	}
+{{- else if and .IsString (not .IsNullable) }}
+	b.{{ .PascalName }} = strings.TrimSpace(b.{{ .PascalName }})
+{{- else if and .IsString .IsNullable }}
+	if b.{{ .PascalName }} != nil {
+		trimmed := strings.TrimSpace(*b.{{ .PascalName }})
+		b.{{ .PascalName }} = &trimmed
+	}
+{{- else if .IsMap }}
+	if b.{{ .PascalName }} == nil {
+		b.{{ .PascalName }} = make({{ .GoType }})
+	}
+{{- else if .IsSlice }}
+	if b.{{ .PascalName }} == nil {
+		b.{{ .PascalName }} = make({{ .GoType }}, 0)
+	}
+{{- end }}
+{{- end }}
+{{- else }}
 	b.Name = strings.TrimSpace(b.Name)
 	b.Description = strings.TrimSpace(b.Description)
 	if b.Status == "" {
 		b.Status = "active"
 	}
+{{- end }}
 }
 
 // Update{{ .PascalName }}Body 更新{{ .ChineseName }}请求载荷。
 type Update{{ .PascalName }}Body struct {
+{{- if .HasCustomFields }}
+{{- range .CustomFields }}
+{{- if .Comment }}
+	// {{ .Comment }}
+{{- end }}
+{{- if eq .ColName "status" }}
+	Status *string `json:"status,omitempty" example:"{{ $.DefaultStatus }}" validate:"omitempty,oneof={{ $.StatusEnumStr }}"`
+{{- else if .IsComplexType }}
+	{{ .PascalName }} {{ .DTOGoType }} `json:"{{ .CamelName }},omitempty"`
+{{- else }}
+	{{ .PascalName }} {{ .DTOGoTypePtr }} `json:"{{ .CamelName }},omitempty" example:"{{ .ExampleValue }}" validate:"omitempty"`
+{{- end }}
+{{- end }}
+{{- else }}
 	// 业务名称
 	Name *string `json:"name" example:"更新后的名称" validate:"omitempty,min=1,max=100"`
 	// 详细描述
 	Description *string `json:"description" example:"更新后的业务描述" validate:"omitempty,max=500"`
 	// 状态 (active: 正常, inactive: 停用)
 	Status *string `json:"status" example:"inactive" enums:"active,inactive" validate:"omitempty,oneof=active inactive"`
+{{- end }}
 }
 
 // Normalize 规范化更新入参。
 func (b *Update{{ .PascalName }}Body) Normalize() {
+{{- if .HasCustomFields }}
+{{- range .CustomFields }}
+{{- if .IsString }}
+	if b.{{ .PascalName }} != nil {
+		trimmed := strings.TrimSpace(*b.{{ .PascalName }})
+		b.{{ .PascalName }} = &trimmed
+	}
+{{- end }}
+{{- end }}
+{{- else }}
 	if b.Name != nil {
 		trimmed := strings.TrimSpace(*b.Name)
 		b.Name = &trimmed
@@ -84,18 +158,28 @@ func (b *Update{{ .PascalName }}Body) Normalize() {
 		trimmed := strings.TrimSpace(*b.Status)
 		b.Status = &trimmed
 	}
+{{- end }}
 }
 
 // {{ .PascalName }}Resource {{ .ChineseName }}对外暴露的视图响应资源。
 type {{ .PascalName }}Resource struct {
 	// 唯一标识符 (UUID)
 	ID string `json:"id" example:"019550b7-3b2d-7041-8c43-26154388e36e"`
+{{- if .HasCustomFields }}
+{{- range .CustomFields }}
+{{- if .Comment }}
+	// {{ .PascalName }} {{ .Comment }}
+{{- end }}
+	{{ .PascalName }} {{ if .IsNullable }}{{ .DTOGoTypePtr }}{{ else }}{{ .DTOGoType }}{{ end }} `json:"{{ .CamelName }}{{ if .IsNullable }},omitempty{{ end }}"{{ if not .IsComplexType }} example:"{{ .ExampleValue }}"{{ end }}`
+{{- end }}
+{{- else }}
 	// 业务名称
 	Name string `json:"name" example:"示例名称"`
 	// 详细描述
 	Description *string `json:"description,omitempty" example:"业务描述说明"`
 	// 状态 (active: 正常, inactive: 停用)
 	Status string `json:"status" example:"active" enums:"active,inactive"`
+{{- end }}
 	// 创建时间 (RFC3339 UTC)
 	CreatedAt time.Time `json:"createdAt" example:"2026-01-01T00:00:00Z"`
 	// 更新时间 (RFC3339 UTC)
@@ -117,12 +201,26 @@ func To{{ .PascalName }}Resource(entity *models.{{ .PascalName }}) {{ .PascalNam
 	}
 
 	return {{ .PascalName }}Resource{
-		ID:          entity.ID,
-		Name:        entity.Name,
+		ID: entity.ID,
+{{- if .HasCustomFields }}
+{{- range .CustomFields }}
+{{- if .IsVector }}
+		{{ .PascalName }}: entity.{{ .PascalName }}.Slice(),
+{{- else if .IsLTree }}
+		{{ .PascalName }}: string(entity.{{ .PascalName }}),
+{{- else if and .IsGeo (not .IsNullable) }}
+		{{ .PascalName }}: &entity.{{ .PascalName }},
+{{- else }}
+		{{ .PascalName }}: entity.{{ .PascalName }},
+{{- end }}
+{{- end }}
+{{- else }}
+		Name: entity.Name,
 		Description: entity.Description,
-		Status:      entity.Status,
-		CreatedAt:   entity.CreatedAt.UTC(),
-		UpdatedAt:   entity.UpdatedAt.UTC(),
+		Status: entity.Status,
+{{- end }}
+		CreatedAt: entity.CreatedAt.UTC(),
+		UpdatedAt: entity.UpdatedAt.UTC(),
 	}
 }
 

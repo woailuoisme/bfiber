@@ -152,6 +152,13 @@ func (f *Factory[T]) DB() bun.IDB {
 	return f.db
 }
 
+// WithDB 绑定或切换工厂关联的数据库连接句柄（支持传入事务句柄），返回工厂副本。
+func (f *Factory[T]) WithDB(db bun.IDB) *Factory[T] {
+	cp := f.clone()
+	cp.db = db
+	return cp
+}
+
 // Faker 返回工厂当前的随机生成器。
 func (f *Factory[T]) Faker() *gofakeit.Faker {
 	return f.faker
@@ -188,13 +195,25 @@ func (f *Factory[T]) MakeMany(ctx context.Context, counts ...int) ([]*T, error) 
 	return items, nil
 }
 
+type ctxPersistingKey struct{}
+
+func withPersisting(ctx context.Context) context.Context {
+	return context.WithValue(ctx, ctxPersistingKey{}, true)
+}
+
+func isPersisting(ctx context.Context) bool {
+	v, _ := ctx.Value(ctxPersistingKey{}).(bool)
+	return v
+}
+
 // Create 在内存生成实体并持久化保存至数据库，同时触发所有钩子。
 func (f *Factory[T]) Create(ctx context.Context) (*T, error) {
 	if f.db == nil {
 		return nil, ErrDatabaseRequired
 	}
 
-	item, err := f.Make(ctx)
+	persistCtx := withPersisting(ctx)
+	item, err := f.Make(persistCtx)
 	if err != nil {
 		return nil, err
 	}
@@ -205,7 +224,7 @@ func (f *Factory[T]) Create(ctx context.Context) (*T, error) {
 	}
 
 	for _, hook := range f.afterCreating {
-		if err := hook(ctx, item); err != nil {
+		if err := hook(persistCtx, item); err != nil {
 			return nil, fmt.Errorf("factory after-creating hook failed: %w", err)
 		}
 	}
@@ -224,7 +243,8 @@ func (f *Factory[T]) CreateMany(ctx context.Context, counts ...int) ([]*T, error
 		total = counts[0]
 	}
 
-	items, err := f.MakeMany(ctx, total)
+	persistCtx := withPersisting(ctx)
+	items, err := f.MakeMany(persistCtx, total)
 	if err != nil {
 		return nil, err
 	}
@@ -282,4 +302,53 @@ func (f *Factory[T]) makeOne(index int) *T {
 		state(item)
 	}
 	return item
+}
+
+// Has 将子实体工厂关联到父工厂（一对多级联）。
+// 当父实体在 Create/CreateMany 持久化写入数据库后，自动为每个父实体触发 child.CreateMany(ctx)，
+// 并通过 setFK 回调将父级的主键或关联字段赋给子级实体。
+// 该级联完全在父实体的同一事务上下文中递归执行。
+func Has[T any, R any](parent *Factory[T], child *Factory[R], setFK func(child *R, parent *T)) *Factory[T] {
+	if parent == nil || child == nil || setFK == nil {
+		return parent
+	}
+	return parent.AfterCreating(func(ctx context.Context, p *T) error {
+		subFactory := child.clone().State(func(c *R) {
+			setFK(c, p)
+		})
+		if subFactory.db == nil {
+			subFactory.db = parent.db
+		}
+		_, err := subFactory.CreateMany(ctx)
+		return err
+	})
+}
+
+// For 将父实体工厂关联到子工厂（反向属于关联）。
+// 在子实体生成/持久化前，确保父实体已生成或持久化，并通过 setFK 回调将父实体字段回填至子实体。
+func For[T any, P any](child *Factory[T], parent *Factory[P], setFK func(child *T, parent *P)) *Factory[T] {
+	if child == nil || parent == nil || setFK == nil {
+		return child
+	}
+	return child.AfterMaking(func(ctx context.Context, c *T) error {
+		parentFactory := parent.clone()
+		if parentFactory.db == nil {
+			parentFactory.db = child.db
+		}
+
+		if isPersisting(ctx) && child.db != nil {
+			p, err := parentFactory.Create(ctx)
+			if err != nil {
+				return fmt.Errorf("factory for: failed to create parent entity: %w", err)
+			}
+			setFK(c, p)
+		} else {
+			p, err := parentFactory.Make(ctx)
+			if err != nil {
+				return fmt.Errorf("factory for: failed to make parent entity: %w", err)
+			}
+			setFK(c, p)
+		}
+		return nil
+	})
 }

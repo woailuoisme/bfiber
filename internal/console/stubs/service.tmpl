@@ -7,9 +7,18 @@ import (
 	"github.com/uptrace/bun"
 
 	"bfiber/internal/database"
-	"bfiber/internal/platform/errs"
-	"bfiber/internal/platform/response"
 	"bfiber/internal/database/models"
+	"bfiber/internal/platform/errs"
+{{- if .HasGeo }}
+	"bfiber/internal/platform/pgtype/geo"
+{{- end }}
+{{- if .HasLTree }}
+	"bfiber/internal/platform/pgtype/nestedset"
+{{- end }}
+{{- if .HasVector }}
+	"bfiber/internal/platform/pgtype/vector"
+{{- end }}
+	"bfiber/internal/platform/response"
 )
 
 // Service 定义 {{ .ChineseName }} 业务用例契约。
@@ -57,10 +66,30 @@ func (s *service) GetByID(ctx context.Context, id string) (*{{ .PascalName }}Res
 }
 
 func (s *service) Create(ctx context.Context, req Create{{ .PascalName }}Body) (*{{ .PascalName }}Resource, error) {
+{{- if .HasSKU }}
+	// 校验货号唯一性（业务前置防线）
+	if existing, _ := models.Find{{ .PascalName }}BySKU(ctx, s.db, req.SKU); existing != nil {
+		return nil, errs.Conflict("SKU already exists")
+	}
+{{- end }}
 	entity := &models.{{ .PascalName }}{
+{{- if .HasCustomFields }}
+{{- range .CustomFields }}
+{{- if .IsVector }}
+		{{ .PascalName }}: vector.NewVector(req.{{ .PascalName }}),
+{{- else if .IsLTree }}
+		{{ .PascalName }}: nestedset.Path(req.{{ .PascalName }}),
+{{- else if and .IsGeo (not .IsNullable) }}
+		{{ .PascalName }}: lo.FromPtr(req.{{ .PascalName }}),
+{{- else }}
+		{{ .PascalName }}: req.{{ .PascalName }},
+{{- end }}
+{{- end }}
+{{- else }}
 		Name:        req.Name,
 		Description: &req.Description,
 		Status:      req.Status,
+{{- end }}
 	}
 
 	if err := entity.Insert(ctx, s.db); err != nil {
@@ -77,7 +106,63 @@ func (s *service) Update(ctx context.Context, id string, req Update{{ .PascalNam
 		return nil, errs.From(err, errs.NotFound("{{ .KebabName }} not found"))
 	}
 
+{{- if .HasSKU }}
+	if req.SKU != nil && *req.SKU != entity.SKU {
+		if existing, _ := models.Find{{ .PascalName }}BySKU(ctx, s.db, *req.SKU); existing != nil && existing.ID != entity.ID {
+			return nil, errs.Conflict("SKU already exists")
+		}
+	}
+{{- end }}
+
+	changedColumns := apply{{ .PascalName }}Patch(entity, &req)
+	if len(changedColumns) > 0 {
+		if err := entity.Update(ctx, s.db, changedColumns...); err != nil {
+			return nil, errs.Internal(err)
+		}
+	}
+
+	res := To{{ .PascalName }}Resource(entity)
+	return &res, nil
+}
+
+// apply{{ .PascalName }}Patch 局部更新实体字段并收集变更列名。
+func apply{{ .PascalName }}Patch(entity *models.{{ .PascalName }}, req *Update{{ .PascalName }}Body) []string {
 	var changedColumns []string
+{{- if .HasCustomFields }}
+{{- range .CustomFields }}
+{{- if .IsVector }}
+	if req.{{ .PascalName }} != nil {
+		entity.{{ .PascalName }} = vector.NewVector(req.{{ .PascalName }})
+		changedColumns = append(changedColumns, "{{ .ColName }}")
+	}
+{{- else if .IsLTree }}
+	if req.{{ .PascalName }} != nil {
+		entity.{{ .PascalName }} = nestedset.Path(*req.{{ .PascalName }})
+		changedColumns = append(changedColumns, "{{ .ColName }}")
+	}
+{{- else if and .IsGeo (not .IsNullable) }}
+	if req.{{ .PascalName }} != nil {
+		entity.{{ .PascalName }} = *req.{{ .PascalName }}
+		changedColumns = append(changedColumns, "{{ .ColName }}")
+	}
+{{- else if .IsComplexType }}
+	if req.{{ .PascalName }} != nil {
+		entity.{{ .PascalName }} = req.{{ .PascalName }}
+		changedColumns = append(changedColumns, "{{ .ColName }}")
+	}
+{{- else if .IsNullable }}
+	if req.{{ .PascalName }} != nil {
+		entity.{{ .PascalName }} = req.{{ .PascalName }}
+		changedColumns = append(changedColumns, "{{ .ColName }}")
+	}
+{{- else }}
+	if req.{{ .PascalName }} != nil {
+		entity.{{ .PascalName }} = *req.{{ .PascalName }}
+		changedColumns = append(changedColumns, "{{ .ColName }}")
+	}
+{{- end }}
+{{- end }}
+{{- else }}
 	if req.Name != nil {
 		entity.Name = *req.Name
 		changedColumns = append(changedColumns, "name")
@@ -90,15 +175,8 @@ func (s *service) Update(ctx context.Context, id string, req Update{{ .PascalNam
 		entity.Status = *req.Status
 		changedColumns = append(changedColumns, "status")
 	}
-
-	if len(changedColumns) > 0 {
-		if err := entity.Update(ctx, s.db, changedColumns...); err != nil {
-			return nil, errs.Internal(err)
-		}
-	}
-
-	res := To{{ .PascalName }}Resource(entity)
-	return &res, nil
+{{- end }}
+	return changedColumns
 }
 
 func (s *service) Delete(ctx context.Context, id string) error {

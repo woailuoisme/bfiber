@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"strings"
 
 	"charm.land/huh/v2"
@@ -19,14 +20,17 @@ const (
 
 // MakeCRUDOptions 封装 make:crud 命令的参数与依赖容器 (SRP & DIP)。
 type MakeCRUDOptions struct {
-	Name    string
-	Client  bool
-	Force   bool
-	DryRun  bool
-	Delete  bool
-	Tag     string
-	Chinese string
-	Factory Factory
+	Name      string
+	Client    bool
+	Force     bool
+	DryRun    bool
+	Delete    bool
+	Tag       string
+	Chinese   string
+	NoSchema  bool
+	NoFactory bool
+	NoSeeder  bool
+	Factory   Factory
 }
 
 // NewMakeCRUDOptions 构造 MakeCRUDOptions 实例。
@@ -55,12 +59,61 @@ func (o *MakeCRUDOptions) Complete(_ *cobra.Command, args []string) error {
 // Validate 校验命令入参合法性。
 func (o *MakeCRUDOptions) Validate() error {
 	if o.Name == "" {
+		usage := "bfiber make:crud <name>"
 		if o.Delete {
-			return &ValidationError{Field: "name", Message: "accepts 1 arg(s), received 0. Usage: bfiber make:crud <name> -d"}
+			usage += " -d"
 		}
-		return &ValidationError{Field: "name", Message: "accepts 1 arg(s), received 0. Usage: bfiber make:crud <name>"}
+		return &ValidationError{Field: "name", Message: "accepts 1 arg(s), received 0. Usage: " + usage}
 	}
 	return nil
+}
+
+// toGeneratorOptions 将命令行参数映射为核心生成器选项。
+func (o *MakeCRUDOptions) toGeneratorOptions() core.GeneratorOptions {
+	return core.GeneratorOptions{
+		Name:        o.Name,
+		IsAdmin:     !o.Client,
+		TagName:     o.Tag,
+		ChineseName: o.Chinese,
+		Force:       o.Force,
+		DryRun:      o.DryRun,
+		NoSchema:    o.NoSchema,
+		NoFactory:   o.NoFactory,
+		NoSeeder:    o.NoSeeder,
+	}
+}
+
+type actionCounts struct {
+	created     int
+	overwritten int
+	deleted     int
+	skipped     int
+	dryRuns     int
+}
+
+func printActionResults(out io.Writer, results []core.GeneratedResult) actionCounts {
+	var counts actionCounts
+	for _, r := range results {
+		switch r.Action {
+		case core.ActionCreated:
+			counts.created++
+			core.SuccessTo(out, "  + %-12s %s", r.Action, r.Path)
+		case core.ActionOverwritten:
+			counts.overwritten++
+			core.WarnTo(out, "  ! %-12s %s", r.Action, r.Path)
+		case core.ActionDeleted:
+			counts.deleted++
+			core.WarnTo(out, "  - %-12s %s", r.Action, r.Path)
+		case core.ActionSkipped:
+			counts.skipped++
+			core.InfoTo(out, "  ~ %-12s %s (%s)", r.Action, r.Path, r.Message)
+		case core.ActionDryRun:
+			counts.dryRuns++
+			core.InfoTo(out, "  ? %-12s %s (%s)", r.Action, r.Path, r.Message)
+		}
+	}
+	core.InfoTo(out, "")
+	return counts
 }
 
 // Run 调度执行 CRUD 模块生成或回退清理逻辑。
@@ -89,13 +142,7 @@ func (o *MakeCRUDOptions) runDelete() error {
 		}
 	}
 
-	opts := core.GeneratorOptions{
-		Name:    o.Name,
-		IsAdmin: !o.Client,
-		Force:   o.Force,
-		DryRun:  o.DryRun,
-	}
-
+	opts := o.toGeneratorOptions()
 	core.TitleTo(streams.Out, fmt.Sprintf("Destroying CRUD module: %s (Admin=%v, DryRun=%v)", o.Name, opts.IsAdmin, opts.DryRun))
 
 	results, err := core.DestroyCRUD(opts)
@@ -103,44 +150,35 @@ func (o *MakeCRUDOptions) runDelete() error {
 		return err
 	}
 
-	var deleted, skipped, dryRuns int
-	for _, r := range results {
-		switch r.Action {
-		case core.ActionDeleted:
-			deleted++
-			core.WarnTo(streams.Out, "  - %-12s %s", r.Action, r.Path)
-		case core.ActionSkipped:
-			skipped++
-			core.InfoTo(streams.Out, "  ~ %-12s %s (%s)", r.Action, r.Path, r.Message)
-		case core.ActionDryRun:
-			dryRuns++
-			core.InfoTo(streams.Out, "  ? %-12s %s (%s)", r.Action, r.Path, r.Message)
-		}
-	}
-
-	core.InfoTo(streams.Out, "")
+	counts := printActionResults(streams.Out, results)
 	if o.DryRun {
-		core.SuccessTo(streams.Out, "Dry run completed: %d files would be deleted.", dryRuns)
+		core.SuccessTo(streams.Out, "Dry run completed: %d files would be deleted.", counts.dryRuns)
 		return nil
 	}
 
-	core.SuccessTo(streams.Out, "Scaffolding cleanup finished: %d deleted, %d skipped.", deleted, skipped)
-	core.WarnTo(streams.Out, "\nReminder: If routes were registered in internal/bootstrap/engine.go, please remove them manually.")
+	core.SuccessTo(streams.Out, "Scaffolding cleanup finished: %d deleted, %d skipped.", counts.deleted, counts.skipped)
+
+	// 自动从 internal/bootstrap/routes_crud.go 中注销路由
+	if removed, err := core.RemoveRoute(opts.RootDir, opts); err != nil {
+		core.WarnTo(streams.Out, "Failed to automatically unregister route: %v", err)
+	} else if removed {
+		core.SuccessTo(streams.Out, "  * Route unregistered from internal/bootstrap/routes_crud.go")
+	}
+
+	// 自动从 internal/database/seeders/database_seeder.go 中注销播种器
+	if removed, err := core.RemoveSeeder(opts.RootDir, opts); err != nil {
+		core.WarnTo(streams.Out, "Failed to automatically unregister seeder: %v", err)
+	} else if removed {
+		core.SuccessTo(streams.Out, "  * Seeder unregistered from internal/database/seeders/database_seeder.go")
+	}
+
 	return nil
 }
 
 func (o *MakeCRUDOptions) runCreate() error {
 	streams := o.Factory.IOStreams()
 
-	opts := core.GeneratorOptions{
-		Name:        o.Name,
-		IsAdmin:     !o.Client,
-		TagName:     o.Tag,
-		ChineseName: o.Chinese,
-		Force:       o.Force,
-		DryRun:      o.DryRun,
-	}
-
+	opts := o.toGeneratorOptions()
 	core.TitleTo(streams.Out, fmt.Sprintf("Scaffolding CRUD module: %s (Admin=%v, DryRun=%v)", o.Name, opts.IsAdmin, opts.DryRun))
 
 	results, err := core.GenerateCRUD(opts)
@@ -148,43 +186,34 @@ func (o *MakeCRUDOptions) runCreate() error {
 		return err
 	}
 
-	var created, overwritten, skipped, dryRuns int
-	for _, r := range results {
-		switch r.Action {
-		case core.ActionCreated:
-			created++
-			core.SuccessTo(streams.Out, "  + %-12s %s", r.Action, r.Path)
-		case core.ActionOverwritten:
-			overwritten++
-			core.WarnTo(streams.Out, "  ! %-12s %s", r.Action, r.Path)
-		case core.ActionSkipped:
-			skipped++
-			core.InfoTo(streams.Out, "  - %-12s %s (%s)", r.Action, r.Path, r.Message)
-		case core.ActionDryRun:
-			dryRuns++
-			core.InfoTo(streams.Out, "  ? %-12s %s (%s)", r.Action, r.Path, r.Message)
-		}
-	}
-
-	core.InfoTo(streams.Out, "")
+	counts := printActionResults(streams.Out, results)
 	if o.DryRun {
-		core.SuccessTo(streams.Out, "Dry run completed: %d files planned.", dryRuns)
+		core.SuccessTo(streams.Out, "Dry run completed: %d files planned.", counts.dryRuns)
 		return nil
 	}
 
-	core.SuccessTo(streams.Out, "Scaffolding finished: %d created, %d overwritten, %d skipped.", created, overwritten, skipped)
+	core.SuccessTo(streams.Out, "Scaffolding finished: %d created, %d overwritten, %d skipped.", counts.created, counts.overwritten, counts.skipped)
+
+	// 自动向 internal/bootstrap/routes_crud.go 注入路由
+	if injected, err := core.InjectRoute(opts.RootDir, opts); err != nil {
+		core.WarnTo(streams.Out, "Failed to automatically register route: %v", err)
+	} else if injected {
+		core.SuccessTo(streams.Out, "  * Route registered in internal/bootstrap/routes_crud.go")
+	}
+
+	// 自动向 internal/database/seeders/database_seeder.go 注入播种器
+	if !o.NoSeeder {
+		if injected, err := core.InjectSeeder(opts.RootDir, opts); err != nil {
+			core.WarnTo(streams.Out, "Failed to automatically register seeder: %v", err)
+		} else if injected {
+			core.SuccessTo(streams.Out, "  * Seeder registered in internal/database/seeders/database_seeder.go")
+		}
+	}
 
 	core.InfoTo(streams.Out, "\nNext steps:")
-	registerFn := "RegisterRoutes"
-	if opts.IsAdmin {
-		registerFn = "RegisterAdminRoutes"
-	}
-	core.InfoTo(streams.Out, "  1. Register routes in internal/bootstrap/engine.go:")
-	data := core.BuildTemplateData(opts)
-	core.InfoTo(streams.Out, "     %s.%s(v1, %sHandler, mw)", data.PackageName, registerFn, data.CamelName)
-	core.InfoTo(streams.Out, "  2. Verify and format code:")
+	core.InfoTo(streams.Out, "  1. Verify and format code:")
 	core.InfoTo(streams.Out, "     rtk just check")
-	core.InfoTo(streams.Out, "  3. Regenerate Swagger/OpenAPI documentation:")
+	core.InfoTo(streams.Out, "  2. Regenerate Swagger/OpenAPI documentation:")
 	core.InfoTo(streams.Out, "     rtk just docs")
 
 	return nil
@@ -270,6 +299,9 @@ Generates / Removes:
   - internal/features/[admin|client]/<name>/service.go
   - internal/features/[admin|client]/<name>/dto.go
   - internal/database/models/<name>.go
+  - internal/database/schemas/0X-<name>.sql
+  - internal/database/factories/<name>_factory.go
+  - internal/database/seeders/<name>_seeder.go
   - internal/features/[admin|client]/<name>/ (if directory is empty on delete)
 
 Examples:
@@ -278,6 +310,7 @@ Examples:
   bfiber make:crud post --client
   bfiber make:crud product --force
   bfiber make:crud order --dry-run
+  bfiber make:crud order --no-seeder
   bfiber make:crud article -d
   bfiber make:crud article --delete --force
   bfiber make:crud order -d --dry-run`,
@@ -304,6 +337,9 @@ Examples:
 	cmd.Flags().BoolVarP(&opts.Delete, "delete", "d", false, "Delete and clean up a generated CRUD feature slice instead of creating it")
 	cmd.Flags().StringVar(&opts.Tag, "tag", "", "Custom Swagger tag name (creation only)")
 	cmd.Flags().StringVar(&opts.Chinese, "chinese", "", "Custom Chinese business description (creation only)")
+	cmd.Flags().BoolVar(&opts.NoSchema, "no-schema", false, "Do not generate database schema DDL file")
+	cmd.Flags().BoolVar(&opts.NoFactory, "no-factory", false, "Do not generate model factory file")
+	cmd.Flags().BoolVar(&opts.NoSeeder, "no-seeder", false, "Do not generate database seeder file")
 
 	return cmd
 }

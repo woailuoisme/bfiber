@@ -6,25 +6,63 @@ import (
 	"strings"
 	"time"
 
+{{- if .HasDecimal }}
+	"github.com/shopspring/decimal"
+{{- end }}
 	"github.com/uptrace/bun"
 
 	"bfiber/internal/database"
+{{- if .HasGeo }}
+	"bfiber/internal/platform/pgtype/geo"
+{{- end }}
+{{- if .HasLTree }}
+	"bfiber/internal/platform/pgtype/nestedset"
+{{- end }}
+{{- if .HasVector }}
+	"bfiber/internal/platform/pgtype/vector"
+{{- end }}
 )
 
 // {{ .PascalName }} 对应 "{{ .TableName }}" 表实体。
 type {{ .PascalName }} struct {
 	bun.BaseModel `bun:"table:{{ .TableName }},alias:{{ .TableAlias }}"`
 
+{{- if .HasBase }}
 	database.Base
+{{- end }}
+{{- if .HasSoftDeletes }}
 	database.SoftDeletes
+{{- end }}
 
+{{- if .HasCustomFields }}
+{{- range .CustomFields }}
+{{- if .Comment }}
+	// {{ .PascalName }} {{ .Comment }}
+{{- end }}
+	{{ .PascalName }} {{ if .IsNullable }}*{{ .GoType }}{{ else }}{{ .GoType }}{{ end }} `{{ .BunTag }}`
+{{- end }}
+{{- else }}
 	// 业务名称
 	Name string `bun:"name,notnull"`
 	// 详细描述
 	Description *string `bun:"description"`
 	// 状态 (active: 正常, inactive: 停用)
 	Status string `bun:"status,notnull,default:'active'"`
+{{- end }}
 }
+
+{{- if .IsAttachable }}
+
+// GetModelType 返回附件归属的多态宿主模型唯一标识名（满足 media.Attachable 契约）。
+func (m *{{ .PascalName }}) GetModelType() string {
+	return "{{ .SnakeName }}"
+}
+
+// GetModelID 返回附件归属的宿主记录主键 ID（满足 media.Attachable 契约）。
+func (m *{{ .PascalName }}) GetModelID() string {
+	return m.ID
+}
+{{- end }}
 
 // Active{{ .PluralPascal }}Query 返回基础查询；软删除记录由 Bun 依据 soft_delete 标签自动排除。
 func Active{{ .PluralPascal }}Query(db bun.IDB) *bun.SelectQuery {
@@ -40,6 +78,32 @@ func Find{{ .PascalName }}ByID(ctx context.Context, db bun.IDB, id string) (*{{ 
 	}
 	return entity, nil
 }
+
+{{- if .HasSKU }}
+
+// Find{{ .PascalName }}BySKU 按货号/SKU查询记录（优先从上下文感知活跃事务）。
+func Find{{ .PascalName }}BySKU(ctx context.Context, db bun.IDB, sku string) (*{{ .PascalName }}, error) {
+	actualDB := database.ResolveDB(ctx, db)
+	entity := new({{ .PascalName }})
+	if err := Active{{ .PluralPascal }}Query(actualDB).Where("LOWER({{ .TableAlias }}.sku) = LOWER(?)", strings.TrimSpace(sku)).Scan(ctx, entity); err != nil {
+		return nil, err
+	}
+	return entity, nil
+}
+{{- end }}
+
+{{- if .HasSlug }}
+
+// Find{{ .PascalName }}BySlug 按 URL Slug 查询记录（优先从上下文感知活跃事务）。
+func Find{{ .PascalName }}BySlug(ctx context.Context, db bun.IDB, slug string) (*{{ .PascalName }}, error) {
+	actualDB := database.ResolveDB(ctx, db)
+	entity := new({{ .PascalName }})
+	if err := Active{{ .PluralPascal }}Query(actualDB).Where("LOWER({{ .TableAlias }}.slug) = LOWER(?)", strings.TrimSpace(slug)).Scan(ctx, entity); err != nil {
+		return nil, err
+	}
+	return entity, nil
+}
+{{- end }}
 
 // List{{ .PluralPascal }}AndCount 按条件分页查询记录并返回总数（优先从上下文感知活跃事务）。
 // 取页与计数由 ScanAndCount 在同一规格上一次完成：Bun 会把 ORDER BY 与 LIMIT/OFFSET 从计数查询中剔除，
@@ -57,7 +121,11 @@ func List{{ .PluralPascal }}AndCount(
 	}
 	if search != "" {
 		pattern := "%" + database.EscapeLike(strings.TrimSpace(search)) + "%"
+{{- if and .HasCustomFields .SearchSQL }}
+		q = q.Where("({{ .SearchSQL }})", {{ .SearchArgs }})
+{{- else }}
 		q = q.Where("{{ .TableAlias }}.name ILIKE ?", pattern)
+{{- end }}
 	}
 
 	total, err := pagination.Apply(q.Order("{{ .TableAlias }}.created_at DESC")).ScanAndCount(ctx)
@@ -106,3 +174,96 @@ func (m *{{ .PascalName }}) SoftDelete(ctx context.Context, db bun.IDB) error {
 	m.UpdatedAt = now
 	return nil
 }
+{{- if .HasVector }}
+
+// SearchSimilar{{ .PluralPascal }} 按向量余弦相似度检索最相近的记录。
+func SearchSimilar{{ .PluralPascal }}(
+	ctx context.Context,
+	db bun.IDB,
+	target vector.Vector,
+	limit int,
+) ([]{{ .PascalName }}, error) {
+	if limit <= 0 {
+		limit = 10
+	}
+	items := make([]{{ .PascalName }}, 0, limit)
+	actualDB := database.ResolveDB(ctx, db)
+	err := Active{{ .PluralPascal }}Query(actualDB).
+		OrderExpr("{{ .TableAlias }}.{{ .VectorColName }} <=> ?", target).
+		Limit(limit).
+		Scan(ctx, &items)
+	if err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+{{- end }}
+{{- if .HasGeo }}
+
+// Find{{ .PluralPascal }}Nearby 按空间地理距离查询范围内的记录（按距离由近到远排序）。
+func Find{{ .PluralPascal }}Nearby(
+	ctx context.Context,
+	db bun.IDB,
+	center geo.Point,
+	radiusMeters float64,
+	limit int,
+) ([]{{ .PascalName }}, error) {
+	if limit <= 0 {
+		limit = 20
+	}
+	items := make([]{{ .PascalName }}, 0, limit)
+	actualDB := database.ResolveDB(ctx, db)
+	err := Active{{ .PluralPascal }}Query(actualDB).
+		Where("ST_DWithin({{ .TableAlias }}.{{ .GeoColName }}, ?, ?)", center, radiusMeters).
+		OrderExpr("ST_Distance({{ .TableAlias }}.{{ .GeoColName }}, ?)", center).
+		Limit(limit).
+		Scan(ctx, &items)
+	if err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+// Find{{ .PluralPascal }}WithinPolygon 查询位于指定空间多边形区域内部的记录。
+func Find{{ .PluralPascal }}WithinPolygon(
+	ctx context.Context,
+	db bun.IDB,
+	area geo.Polygon,
+	limit int,
+) ([]{{ .PascalName }}, error) {
+	if limit <= 0 {
+		limit = 50
+	}
+	items := make([]{{ .PascalName }}, 0, limit)
+	actualDB := database.ResolveDB(ctx, db)
+	err := Active{{ .PluralPascal }}Query(actualDB).
+		Where("ST_Within({{ .TableAlias }}.{{ .GeoColName }}, ?)", area).
+		Limit(limit).
+		Scan(ctx, &items)
+	if err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+{{- end }}
+{{- if .HasLTree }}
+
+// Find{{ .PluralPascal }}BySubtree 按 ltree 路径查询指定节点及其所有子孙记录。
+func Find{{ .PluralPascal }}BySubtree(
+	ctx context.Context,
+	db bun.IDB,
+	rootPath nestedset.Path,
+) ([]{{ .PascalName }}, error) {
+	items := make([]{{ .PascalName }}, 0)
+	actualDB := database.ResolveDB(ctx, db)
+	err := Active{{ .PluralPascal }}Query(actualDB).
+		Where("{{ .TableAlias }}.{{ .LTreeColName }} <@ ?", rootPath).
+		Order("{{ .TableAlias }}.{{ .LTreeColName }} ASC").
+		Scan(ctx, &items)
+	if err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+{{- end }}
+

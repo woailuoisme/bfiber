@@ -2,16 +2,19 @@ package seeders
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"maps"
 	"reflect"
 	"slices"
+	"strings"
 	"sync"
 	"time"
 
 	"github.com/uptrace/bun"
 	"go.uber.org/zap"
 
+	"bfiber/internal/database"
 	"bfiber/internal/platform/logger"
 )
 
@@ -127,6 +130,52 @@ func (r *Runner) Call(ctx context.Context, seeders ...Seeder) error {
 		if hook != nil {
 			hook(name, i+1, total, duration, true)
 		}
+	}
+	return nil
+}
+
+// CallInTx 在单一事务中原子调度一组 Seeder，任一 Seeder 失败即自动回滚。
+func (r *Runner) CallInTx(ctx context.Context, seeders ...Seeder) error {
+	return database.RunInTx(ctx, r.db, func(txCtx context.Context) error {
+		return r.Call(txCtx, seeders...)
+	})
+}
+
+// Truncate 快速截断指定的数据库表（包含 RESTART IDENTITY CASCADE），支持传入模型指针或表名字符串。
+func (r *Runner) Truncate(ctx context.Context, targets ...any) error {
+	if r.db == nil || len(targets) == 0 {
+		return nil
+	}
+	db := database.ResolveDB(ctx, r.db)
+	if db == nil {
+		return nil
+	}
+
+	for _, target := range targets {
+		if target == nil {
+			return errors.New("seeder truncate: target cannot be nil")
+		}
+
+		q := db.NewTruncateTable()
+		var targetDesc string
+		switch v := target.(type) {
+		case string:
+			cleanName := strings.TrimSpace(v)
+			if cleanName == "" {
+				continue
+			}
+			q = q.Table(cleanName)
+			targetDesc = cleanName
+		default:
+			q = q.Model(target)
+			targetDesc = fmt.Sprintf("%T", target)
+		}
+
+		q = q.Cascade()
+		if _, err := q.Exec(ctx); err != nil {
+			return fmt.Errorf("seeder truncate table [%s] failed: %w", targetDesc, err)
+		}
+		logger.FromContext(ctx).Debug("table truncated successfully", zap.String("target", targetDesc))
 	}
 	return nil
 }

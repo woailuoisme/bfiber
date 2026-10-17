@@ -1,0 +1,152 @@
+package factories
+
+import (
+	"context"
+	"fmt"
+	"strings"
+	"time"
+
+	"github.com/brianvoe/gofakeit/v7"
+	"github.com/samber/lo"
+{{- if .HasDecimal}}
+	"github.com/shopspring/decimal"
+{{- end}}
+	"github.com/uptrace/bun"
+
+	"bfiber/internal/database"
+	"bfiber/internal/database/models"
+)
+
+// {{.PascalName}} 快捷构造 {{.PascalName}}Factory 实例。
+func {{.PascalName}}(db bun.IDB) *{{.PascalName}}Factory {
+	return New{{.PascalName}}Factory(db)
+}
+
+// {{.PascalName}}Factory 是面向 models.{{.PascalName}} 的领域工厂，提供开箱即用的假数据定义与状态链。
+type {{.PascalName}}Factory struct {
+	base *Factory[models.{{.PascalName}}]
+}
+
+// New{{.PascalName}}Factory 构造{{.ChineseName}}模型工厂。db 可为 nil（纯内存纳秒级构建）。
+func New{{.PascalName}}Factory(db bun.IDB) *{{.PascalName}}Factory {
+	return &{{.PascalName}}Factory{
+		base: New(db, func(f *gofakeit.Faker) *models.{{.PascalName}} {
+			now := time.Now().UTC()
+			id := newUUID()
+
+			return &models.{{.PascalName}}{
+				Base: database.Base{
+					ID:        id.String(),
+					CreatedAt: now,
+					UpdatedAt: now,
+				},
+{{- range .FakeAssigns}}
+				{{.FieldName}}: {{.Expr}},
+{{- end}}
+			}
+		}),
+	}
+}
+
+// clone 产生当前 {{.PascalName}}Factory 的深层不可变副本。
+func (f *{{.PascalName}}Factory) clone() *{{.PascalName}}Factory {
+	return &{{.PascalName}}Factory{
+		base: f.base.clone(),
+	}
+}
+
+// Count 设置批量生成的数量，返回工厂副本。
+func (f *{{.PascalName}}Factory) Count(count int) *{{.PascalName}}Factory {
+	cp := f.clone()
+	cp.base = cp.base.Count(count)
+	return cp
+}
+
+// ChunkSize 设置批量持久化分块大小，返回工厂副本。
+func (f *{{.PascalName}}Factory) ChunkSize(size int) *{{.PascalName}}Factory {
+	cp := f.clone()
+	cp.base = cp.base.ChunkSize(size)
+	return cp
+}
+
+// OnProgress 注册批量持久化分块写入时的进度回调钩子，返回工厂副本。
+func (f *{{.PascalName}}Factory) OnProgress(fn ProgressFunc) *{{.PascalName}}Factory {
+	cp := f.clone()
+	cp.base = cp.base.OnProgress(fn)
+	return cp
+}
+
+// Seed 设置确定性随机数种子，返回工厂副本。
+func (f *{{.PascalName}}Factory) Seed(seed uint64) *{{.PascalName}}Factory {
+	cp := f.clone()
+	cp.base = cp.base.Seed(seed)
+	return cp
+}
+
+// State 附加自定义状态修改函数，返回工厂副本。
+func (f *{{.PascalName}}Factory) State(fn StateFunc[models.{{.PascalName}}]) *{{.PascalName}}Factory {
+	cp := f.clone()
+	cp.base = cp.base.State(fn)
+	return cp
+}
+
+// Sequence 附加基于下标的序列计算函数，返回工厂副本。
+func (f *{{.PascalName}}Factory) Sequence(fn SequenceFunc[models.{{.PascalName}}]) *{{.PascalName}}Factory {
+	cp := f.clone()
+	cp.base = cp.base.Sequence(fn)
+	return cp
+}
+
+// AfterMaking 注册内存构建完成后的回调，返回工厂副本。
+func (f *{{.PascalName}}Factory) AfterMaking(fn HookFunc[models.{{.PascalName}}]) *{{.PascalName}}Factory {
+	cp := f.clone()
+	cp.base = cp.base.AfterMaking(fn)
+	return cp
+}
+
+// AfterCreating 注册持久化完成后的回调，返回工厂副本。
+func (f *{{.PascalName}}Factory) AfterCreating(fn HookFunc[models.{{.PascalName}}]) *{{.PascalName}}Factory {
+	cp := f.clone()
+	cp.base = cp.base.AfterCreating(fn)
+	return cp
+}
+{{range .StatusModifiers}}
+// {{.MethodName}} 将{{$.ChineseName}}状态设置为{{.EnumVal}}，返回工厂副本。
+func (f *{{$.PascalName}}Factory) {{.MethodName}}() *{{$.PascalName}}Factory {
+	return f.State(func(m *models.{{$.PascalName}}) {
+		m.Status = models.{{.ConstName}}
+	})
+}
+{{end}}
+// Make 在内存中生成单个 {{.PascalName}} 实体（不写数据库）。
+func (f *{{.PascalName}}Factory) Make(ctx context.Context) (*models.{{.PascalName}}, error) {
+	return f.base.Make(ctx)
+}
+
+// MakeMany 在内存中生成指定数量的 {{.PascalName}} 实体切片。
+func (f *{{.PascalName}}Factory) MakeMany(ctx context.Context, counts ...int) ([]*models.{{.PascalName}}, error) {
+	return f.base.MakeMany(ctx, counts...)
+}
+
+// Create 在内存生成实体并持久化保存至数据库。
+func (f *{{.PascalName}}Factory) Create(ctx context.Context) (*models.{{.PascalName}}, error) {
+	return f.base.Create(ctx)
+}
+
+// CreateMany 批量创建并持久化保存 {{.PascalName}} 实体切片。
+func (f *{{.PascalName}}Factory) CreateMany(ctx context.Context, counts ...int) ([]*models.{{.PascalName}}, error) {
+	return f.base.CreateMany(ctx, counts...)
+}
+
+// Base 暴露底层泛型工厂基座。
+func (f *{{.PascalName}}Factory) Base() *Factory[models.{{.PascalName}}] {
+	return f.base
+}
+
+// WithDB 绑定或切换数据库连接句柄（支持传入事务句柄），返回工厂副本。
+func (f *{{.PascalName}}Factory) WithDB(db bun.IDB) *{{.PascalName}}Factory {
+	cp := f.clone()
+	cp.base = cp.base.WithDB(db)
+	return cp
+}
+

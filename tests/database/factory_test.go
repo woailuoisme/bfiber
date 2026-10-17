@@ -1,16 +1,32 @@
 package database_test
 
 import (
+	"context"
 	"fmt"
 	"testing"
 	"time"
 
+	"github.com/brianvoe/gofakeit/v7"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
 	"bfiber/internal/database/factories"
 	"bfiber/internal/database/models"
 )
+
+type dummyUser struct {
+	ID    string
+	Name  string
+	Email string
+	Role  string
+	Index int
+}
+
+type dummyPost struct {
+	ID       string
+	AuthorID string
+	Title    string
+}
 
 func TestFactory_InMemoryMake(t *testing.T) {
 	ctx := t.Context()
@@ -167,4 +183,119 @@ func TestFactory_RequireDatabaseError(t *testing.T) {
 
 	_, err = factories.User(nil).CreateMany(ctx, 3)
 	require.ErrorIs(t, err, factories.ErrDatabaseRequired)
+}
+
+func TestGenericFactory_MakeAndMakeMany(t *testing.T) {
+	ctx := t.Context()
+
+	userFactory := factories.New(nil, func(f *gofakeit.Faker) *dummyUser {
+		return &dummyUser{
+			ID:    f.UUID(),
+			Name:  f.Name(),
+			Email: f.Email(),
+			Role:  "user",
+		}
+	})
+
+	t.Run("Make single item", func(t *testing.T) {
+		user, err := userFactory.Make(ctx)
+		require.NoError(t, err)
+		assert.NotEmpty(t, user.ID)
+		assert.NotEmpty(t, user.Name)
+		assert.NotEmpty(t, user.Email)
+		assert.Equal(t, "user", user.Role)
+	})
+
+	t.Run("MakeMany multiple items", func(t *testing.T) {
+		users, err := userFactory.Count(5).MakeMany(ctx)
+		require.NoError(t, err)
+		assert.Len(t, users, 5)
+
+		// 检查各实例独立且数据不同
+		assert.NotEqual(t, users[0].ID, users[1].ID)
+	})
+}
+
+func TestGenericFactory_StateAndSequence(t *testing.T) {
+	ctx := t.Context()
+
+	baseFactory := factories.New(nil, func(f *gofakeit.Faker) *dummyUser {
+		return &dummyUser{
+			ID:   f.UUID(),
+			Role: "user",
+		}
+	})
+
+	// 测试不可变链式调用
+	adminFactory := baseFactory.State(func(u *dummyUser) {
+		u.Role = "admin"
+	})
+
+	seqFactory := adminFactory.Sequence(func(u *dummyUser, idx int) {
+		u.Index = idx
+	})
+
+	// 验证 baseFactory 状态未被污染
+	baseUser, err := baseFactory.Make(ctx)
+	require.NoError(t, err)
+	assert.Equal(t, "user", baseUser.Role)
+
+	// 验证 adminFactory 状态正确
+	adminUser, err := adminFactory.Make(ctx)
+	require.NoError(t, err)
+	assert.Equal(t, "admin", adminUser.Role)
+
+	// 验证 seqFactory 序列正确
+	users, err := seqFactory.Count(3).MakeMany(ctx)
+	require.NoError(t, err)
+	require.Len(t, users, 3)
+	for i, u := range users {
+		assert.Equal(t, "admin", u.Role)
+		assert.Equal(t, i, u.Index)
+	}
+}
+
+func TestGenericFactory_AfterMakingHook(t *testing.T) {
+	ctx := t.Context()
+
+	var hookRun bool
+	factory := factories.New(nil, func(f *gofakeit.Faker) *dummyUser {
+		return &dummyUser{ID: "test-1"}
+	}).AfterMaking(func(ctx context.Context, item *dummyUser) error {
+		hookRun = true
+		item.Role = "modified-by-hook"
+		return nil
+	})
+
+	user, err := factory.Make(ctx)
+	require.NoError(t, err)
+	assert.True(t, hookRun)
+	assert.Equal(t, "modified-by-hook", user.Role)
+}
+
+func TestGenericFactory_For_Relationship(t *testing.T) {
+	ctx := t.Context()
+
+	userFactory := factories.New(nil, func(f *gofakeit.Faker) *dummyUser {
+		return &dummyUser{
+			ID:   "parent-user-123",
+			Name: "Parent User",
+		}
+	})
+
+	postFactory := factories.New(nil, func(f *gofakeit.Faker) *dummyPost {
+		return &dummyPost{
+			ID:    "post-1",
+			Title: "Test Post",
+		}
+	})
+
+	postWithAuthorFactory := factories.For(postFactory, userFactory, func(child *dummyPost, parent *dummyUser) {
+		child.AuthorID = parent.ID
+	})
+
+	post, err := postWithAuthorFactory.Make(ctx)
+	require.NoError(t, err)
+	assert.Equal(t, "parent-user-123", post.AuthorID)
+	assert.Equal(t, "Test Post", post.Title)
 }

@@ -11,29 +11,19 @@ import (
 	"github.com/gofiber/fiber/v3/middleware/favicon"
 
 	"bfiber/internal/config"
-	adminauth "bfiber/internal/features/admin/auth"
-	admin "bfiber/internal/features/admin/user"
-	"bfiber/internal/features/client/auth"
-	"bfiber/internal/features/client/profile"
-	paymentFeature "bfiber/internal/features/payment"
-	realtimeFeature "bfiber/internal/features/realtime"
-	"bfiber/internal/features/system"
 	"bfiber/internal/middleware"
 	"bfiber/internal/platform/validator"
 )
 
 // buildEngine 组装 Fiber 引擎与全部路由。
-func buildEngine(
-	cfg *config.Config,
-	mw *middleware.Middleware,
-	systemHandler *system.Handler,
-	authHandler *auth.Handler,
-	profileHandler *profile.Handler,
-	adminHandler *admin.Handler,
-	adminAuthHandler *adminauth.Handler,
-	realtimeHandler *realtimeFeature.Handler,
-	paymentHandler *paymentFeature.Handler,
-) (*fiber.App, error) {
+func buildEngine(deps *RouteDeps) (*fiber.App, error) {
+	if deps == nil || deps.Config == nil || deps.Middleware == nil {
+		return nil, errors.New("bootstrap: build engine requires valid dependencies with config and middleware")
+	}
+
+	cfg := deps.Config
+	mw := deps.Middleware
+
 	if err := validator.InitEngine(); err != nil {
 		return nil, fmt.Errorf("init validator engine failed: %w", err)
 	}
@@ -77,24 +67,8 @@ func buildEngine(
 		mw.Idempotency(), // 10. 官方幂等控制：基于 X-Idempotency-Key 进行并发锁定与成功响应回放
 	)
 
-	// 注册根路径与系统探针路由（/、/livez、/readyz）
-	system.RegisterRoutes(app, systemHandler)
-
-	// 仅在开启 ENABLE_DOCS 时注册 API 文档路由
-	if cfg.App.EnableDocs {
-		registerDocs(app)
-	}
-
-	v1 := app.Group("/v1")
-	if mw != nil && mw.RequestTimeout() > 0 {
-		v1.Use(mw.Timeout())
-	}
-	auth.RegisterRoutes(v1, authHandler, mw)
-	profile.RegisterRoutes(v1, profileHandler, mw)
-	adminauth.RegisterAdminAuthRoutes(v1, adminAuthHandler, mw)
-	admin.RegisterAdminRoutes(v1, adminHandler, mw)
-	realtimeFeature.RegisterRoutes(v1, realtimeHandler, mw)
-	paymentFeature.RegisterRoutes(v1, paymentHandler, mw)
+	// 统一调度由 internal/bootstrap/routes.go 管理的路由配置
+	registerAllRoutes(app, deps)
 
 	return app, nil
 }
@@ -112,15 +86,5 @@ func InspectEngine(cfg *config.Config) (*fiber.App, error) {
 		RequestTimeout: cfg.App.Server.RequestTimeout,
 	})
 
-	return buildEngine(
-		cfg,
-		mw,
-		&system.Handler{},
-		&auth.Handler{},
-		&profile.Handler{},
-		&admin.Handler{},
-		&adminauth.Handler{},
-		&realtimeFeature.Handler{},
-		&paymentFeature.Handler{},
-	)
+	return buildEngine(NewInspectRouteDeps(cfg, mw))
 }

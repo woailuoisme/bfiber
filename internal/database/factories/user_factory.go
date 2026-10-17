@@ -61,6 +61,13 @@ func (uf *UserFactory) clone() *UserFactory {
 	}
 }
 
+// WithDB 绑定或切换数据库连接句柄（支持传入事务句柄），返回工厂副本。
+func (uf *UserFactory) WithDB(db bun.IDB) *UserFactory {
+	cp := uf.clone()
+	cp.base = cp.base.WithDB(db)
+	return cp
+}
+
 // Count 设置批量生成的数量，返回工厂副本。
 func (uf *UserFactory) Count(count int) *UserFactory {
 	cp := uf.clone()
@@ -211,6 +218,20 @@ func (uf *UserFactory) WithAccount(password string) *UserFactory {
 		}
 		return nil
 	})
+}
+
+// HasAccounts 级联创建指定数量的关联 Account 凭据，采用通用 Has 级联机制。
+func (uf *UserFactory) HasAccounts(count int, states ...StateFunc[models.Account]) *UserFactory {
+	cp := uf.clone()
+	accountFactory := NewAccountFactory(uf.base.DB()).Count(count)
+	for _, s := range states {
+		accountFactory.base = accountFactory.base.State(s)
+	}
+	cp.base = Has(cp.base, accountFactory.Base(), func(child *models.Account, parent *models.User) {
+		child.UserID = parent.ID
+		child.AccountID = parent.Email
+	})
+	return cp
 }
 
 // Make 在内存中生成单个 User 实体（不写数据库）。

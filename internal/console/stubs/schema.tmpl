@@ -1,0 +1,20 @@
+-- {{.ChineseName}}数据表模式定义 ({{.TableName}})
+-- 包含核心业务字段、状态流转控制、审计追踪与安全检索索引
+
+CREATE TABLE "{{.TableName}}" (
+  id text NOT NULL DEFAULT uuidv7()::text, -- UUIDv7 主键标识符（PostgreSQL 18 原生生成）
+  name text NOT NULL, -- {{.ChineseName}}名称/标题
+  code text NOT NULL, -- 业务唯一编码/编号标识
+  status text NOT NULL DEFAULT '{{if .DefaultStatus}}{{.DefaultStatus}}{{else}}draft{{end}}', -- 业务状态
+  description text NULL, -- 详细描述或图文介绍
+  created_at timestamptz NOT NULL DEFAULT CURRENT_TIMESTAMP, -- 记录创建时间戳
+  updated_at timestamptz NOT NULL DEFAULT CURRENT_TIMESTAMP, -- 记录最后更新时间戳
+  deleted_at timestamptz NULL, -- 软删除时间戳（为空表示活跃）
+  PRIMARY KEY (id),
+  CONSTRAINT ck_{{.TableName}}_status CHECK (status IN ({{if .StatusEnumVals}}{{range $i, $v := .StatusEnumVals}}{{if $i}}, {{end}}'{{$v}}'{{end}}{{else}}'draft', 'published', 'archived'{{end}}))
+);
+
+-- 检索索引与部分唯一性约束
+CREATE UNIQUE INDEX idx_{{.TableName}}_code ON "{{.TableName}}" (LOWER(code)) WHERE deleted_at IS NULL; -- 活跃记录编码唯一索引
+CREATE INDEX idx_{{.TableName}}_status ON "{{.TableName}}" (status) WHERE deleted_at IS NULL; -- 状态检索索引
+CREATE INDEX idx_{{.TableName}}_deleted_at ON "{{.TableName}}" (deleted_at); -- 软删除归档索引

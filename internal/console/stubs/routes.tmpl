@@ -10,7 +10,7 @@ import (
 {{ if .IsAdmin }}
 // RegisterAdminRoutes 注册管理端点 ({{ .RoutePath }})。
 func RegisterAdminRoutes(router fiber.Router, handler *Handler, mw *middleware.Middleware) {
-	group := router.Group("{{ .RoutePath }}", mw.Throttle(middleware.TierAuthenticated), mw.Auth())
+	group := router.Group("{{ .RoutePath }}", mw.Auth("admin"), mw.Throttle(middleware.TierAuthenticated))
 
 	group.Get("", mw.Can(authorization.Resource("{{ .PluralSnake }}"), authorization.ActionList), handler.List)
 	group.Post("", mw.Can(authorization.Resource("{{ .PluralSnake }}"), authorization.ActionCreate), handler.Create)

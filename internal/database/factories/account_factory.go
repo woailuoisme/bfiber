@@ -119,3 +119,15 @@ func (af *AccountFactory) Create(ctx context.Context) (*models.Account, error) {
 func (af *AccountFactory) CreateMany(ctx context.Context, counts ...int) ([]*models.Account, error) {
 	return af.base.CreateMany(ctx, counts...)
 }
+
+// Base 暴露底层泛型工厂基座。
+func (af *AccountFactory) Base() *Factory[models.Account] {
+	return af.base
+}
+
+// WithDB 绑定或切换数据库连接句柄（支持传入事务句柄），返回工厂副本。
+func (af *AccountFactory) WithDB(db bun.IDB) *AccountFactory {
+	cp := af.clone()
+	cp.base = cp.base.WithDB(db)
+	return cp
+}

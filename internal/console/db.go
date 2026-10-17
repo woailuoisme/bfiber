@@ -77,6 +77,7 @@ func newDBMigrateCmd(f Factory) *cobra.Command {
 // DBSeedOptions 封装 db:seed 命令的参数与依赖容器 (SRP & DIP)。
 type DBSeedOptions struct {
 	ClassName string
+	Force     bool
 	Factory   Factory
 }
 
@@ -110,6 +111,27 @@ func (o *DBSeedOptions) Validate() error {
 
 // Run 调度运行数据播种。
 func (o *DBSeedOptions) Run(ctx context.Context) error {
+	cfg, err := o.Factory.Config()
+	if err != nil {
+		return err
+	}
+
+	streams := o.Factory.IOStreams()
+	if cfg.IsProduction() && !o.Force {
+		confirmed, err := o.Factory.Prompter().Confirm(
+			"Are you sure you want to run seeders in production?",
+			fmt.Sprintf("Seeding [%s] may insert mock data into production database [%s].", o.ClassName, cfg.App.Name),
+			"Yes, run seeders in production",
+		)
+		if err != nil {
+			return err
+		}
+		if !confirmed {
+			core.WarnTo(streams.Out, "Database seeding cancelled.")
+			return core.ErrCanceled
+		}
+	}
+
 	db, err := o.Factory.DB(ctx)
 	if err != nil {
 		return err
@@ -121,7 +143,6 @@ func (o *DBSeedOptions) Run(ctx context.Context) error {
 		return fmt.Errorf("seeder [%s] not found (available: %v)", o.ClassName, available)
 	}
 
-	streams := o.Factory.IOStreams()
 	core.TitleTo(streams.Out, fmt.Sprintf("Seeding [%s]...", o.ClassName))
 	if err := runSeederWithProgress(ctx, streams, db, targetSeeder); err != nil {
 		return err
@@ -151,6 +172,7 @@ func newDBSeedCmd(f Factory) *cobra.Command {
 	}
 
 	cmd.Flags().StringVarP(&opts.ClassName, "class", "c", "DatabaseSeeder", "The class name of the seeder to run")
+	cmd.Flags().BoolVarP(&opts.Force, "force", "f", false, "Force the operation to run in production without confirmation")
 	_ = cmd.RegisterFlagCompletionFunc("class", func(_ *cobra.Command, _ []string, _ string) ([]string, cobra.ShellCompDirective) {
 		return seeders.List(), cobra.ShellCompDirectiveNoFileComp
 	})

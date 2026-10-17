@@ -216,15 +216,20 @@ func NewApplication(ctx context.Context, portOverride int) (*Application, error)
 	paymentService := paymentFeature.NewService(paymentManager, cacheClient, cfg, eventBusManager)
 	paymentHandler := paymentFeature.NewHandler(paymentService)
 
-	engine, err := buildEngine(
-		cfg, mw, systemHandler,
-		auth.NewHandler(authService),
-		profile.NewHandler(profileService),
-		admin.NewHandler(adminService),
-		adminauth.NewHandler(adminAuthService),
-		realtimeHandler,
-		paymentHandler,
-	)
+	routeDeps := &RouteDeps{
+		Config:           cfg,
+		Middleware:       mw,
+		DB:               db,
+		SystemHandler:    systemHandler,
+		AuthHandler:      auth.NewHandler(authService),
+		ProfileHandler:   profile.NewHandler(profileService),
+		AdminHandler:     admin.NewHandler(adminService),
+		AdminAuthHandler: adminauth.NewHandler(adminAuthService),
+		RealtimeHandler:  realtimeHandler,
+		PaymentHandler:   paymentHandler,
+	}
+
+	engine, err := buildEngine(routeDeps)
 	if err != nil {
 		return nil, td.fail(err)
 	}
